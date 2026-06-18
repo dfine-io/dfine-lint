@@ -1,0 +1,22 @@
+// Type-checks the rule sources (dlint-rules/) alongside the engine (src/).
+// The main build (tsconfig.json) only includes src/, so rules are not checked there;
+// this config closes that gap. Rules resolve `@dfine-io-gmbh/dlint` to the live source
+// via `paths`, so no prior build is needed and drift is caught immediately.
+// Run with: pnpm typecheck
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "baseUrl": ".",
+    "paths": {
+      "@dfine-io-gmbh/dlint": ["./src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "dlint-rules/**/*.ts"],
+  "exclude": ["node_modules", "build", "tests"]
+}

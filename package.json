@@ -1,0 +1,81 @@
+{
+  "name": "@dfine-io-gmbh/dlint",
+  "version": "1.2.0",
+  "description": "Semantic TypeScript linter built on the TS Compiler API — 89 rules covering quality, security, performance, and architecture, plus secret scanning and an HTML report dashboard.",
+  "license": "MIT",
+  "author": "dfine.io <support@dfine.io>",
+  "homepage": "https://github.com/dfine-io/dfine-lint#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dfine-io/dfine-lint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dfine-io/dfine-lint/issues"
+  },
+  "keywords": [
+    "linter",
+    "typescript",
+    "compiler-api",
+    "static-analysis",
+    "code-quality",
+    "security",
+    "performance",
+    "architecture",
+    "dlint"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "dlint": "build/cli.js"
+  },
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js"
+    }
+  },
+  "files": [
+    "build",
+    "dlint-rules",
+    "skills",
+    "assets/secret-patterns.json",
+    "assets/secret-patterns.schema.json",
+    "assets/report-dashboard.jpg",
+    "assets/report-findings.jpg",
+    "LICENSE",
+    "THIRD-PARTY-LICENSES.md",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "dev": "tsc --watch",
+    "dlint": "node build/cli.js",
+    "lint:dlint": "node build/cli.js --format compact",
+    "refresh-secret-patterns": "curl -sSL -o /tmp/gl.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml && node scripts/build-secret-patterns.mjs /tmp/gl.toml",
+    "prepublishOnly": "rm -rf build tsconfig.tsbuildinfo && tsc && chmod +x build/cli.js"
+  },
+  "dependencies": {
+    "ignore": "^7.0.0",
+    "jiti": "^2.6.1"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@types/react": "^19.2.15",
+    "react": "^19.2.6",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  }
+}

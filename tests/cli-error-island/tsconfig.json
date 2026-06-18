@@ -1,0 +1,1 @@
+{ this is intentionally not valid JSON - the cli-robustness test asserts a friendly error
