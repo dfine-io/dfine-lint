@@ -49,7 +49,7 @@ code + same types -> same findings, every run. This also makes a rule scale to a
 not just the one in front of you.
 
 **3. No duplication: before authoring a new rule, prove no existing rule covers it.**
-dlint ships ~89 universal rules, and most tunable values are exposed via `ruleOptions` - a
+dlint ships ~86 universal rules, and most tunable values are exposed via `ruleOptions` - a
 project changes a threshold, list, or allow-set without copying the rule. Before writing a
 new rule, check:
 

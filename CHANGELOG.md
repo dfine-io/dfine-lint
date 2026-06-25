@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
+
+### Removed
+
+- **Three CSS-Modules styling rules retired** from the universal set: `css-class-existence`,
+  `no-css-properties`, and `no-static-inline-style`. They encoded a CSS-Modules styling stance,
+  not a codebase-agnostic bug — `no-static-inline-style` even hardcoded an `app/styles/*.module.css`
+  path in its message. A project that wants these conventions should ship them as project-specific
+  rules in its own `rulesDir`. Built-in rule count: **89 → 86** (61 default + 25 opinionated).
+  - A `dlint.config.ts` that referenced these ids (e.g. an `overrides` entry) keeps working — a
+    stale rule-id override is a no-op; remove it at your convenience.
+
+## 1.2.0
 
 ### Added
 

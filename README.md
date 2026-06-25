@@ -14,7 +14,7 @@
 <p align="center">
   The TypeScript linter that runs on the compiler itself.<br/>
   No abstraction layer. No Language Server overhead. No runtime cost.<br/>
-  89 built-in rules, security and secret scanning included. Full TypeChecker access, one shared compiler program.
+  86 built-in rules, security and secret scanning included. Full TypeChecker access, one shared compiler program.
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ These are type-level, cross-file, architectural constraints. They require the co
 
 ## Built-in rules
 
-89 rules ship with the package. By default **62 run in any TypeScript project** — a clean, zero-config CI gate of universal bugs, security issues, and framework-guarded checks. The other **27 are opinionated** style/architecture rules (plus a few opinionated sub-checks); they ship in an **off-by-default `opinionated` group** you enable when you want them (see [Configuration](#configuration)).
+86 rules ship with the package. By default **61 run in any TypeScript project** — a clean, zero-config CI gate of universal bugs, security issues, and framework-guarded checks. The other **25 are opinionated** style/architecture rules (plus a few opinionated sub-checks); they ship in an **off-by-default `opinionated` group** you enable when you want them (see [Configuration](#configuration)).
 
 | Category         | Rules                                                                                                                                                                                                                                                                                                                                                           | What they catch                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -65,11 +65,11 @@ These are type-level, cross-file, architectural constraints. They require the co
 | **Security**     | `security`, `safety`, `input-validation`, `no-dynamic-sql`, `no-ssrf`, `no-page-params-unsafe-parse`, `no-implied-eval`, `unnecessary-use-server`, `no-child-process`, `no-non-literal-fs-path`, `no-non-literal-require`, `no-non-literal-regexp`, `no-weak-crypto`, `no-secrets`                                                                              | Auth gaps, injection, SSRF, command injection, path traversal, weak crypto, hardcoded secrets |
 | **Correctness**  | `correctness`, `logic`, `error-handling`, `no-identical-binary-operands`, `no-unthrown-error`, `no-all-duplicated-branches`, `no-collection-size-mischeck`                                                                                                                                                                                                      | Logic errors, uncaught exceptions                                                             |
 | **React**        | `react`, `rules-of-hooks`, `exhaustive-deps`, `effect-cleanup`, `state-hooks-cluster`, `no-async-client-component`, `no-client-data-fetch`, `no-unescaped-entities`, `jsx-no-useless-fragment`                                                                                                                                                                  | Hook violations, client/server boundary, render bugs                                          |
-| **Style**        | `readability`, `simplification`, `naming-convention`, `duplicate-import`, `prefer-optional-chain`, `prefer-nullish-coalescing`, `prefer-modern-api`, `no-deprecated-api`, `deprecated-usage`, `no-underscore-prefix`, `no-implicit-coercion`, `no-magic-numbers`, `no-multiline-comments`, `no-css-properties`, `no-static-inline-style`, `css-class-existence` | Code clarity, modern patterns, CSS hygiene                                                    |
+| **Style**        | `readability`, `simplification`, `naming-convention`, `duplicate-import`, `prefer-optional-chain`, `prefer-nullish-coalescing`, `prefer-modern-api`, `no-deprecated-api`, `deprecated-usage`, `no-underscore-prefix`, `no-implicit-coercion`, `no-magic-numbers`, `no-multiline-comments` | Code clarity, modern patterns                                                    |
 | **Architecture** | `unused-export`, `no-re-export`, `self-import`, `no-import-cycle`, `no-duplicated-constants`, `no-local-constants`, `max-file-lines`, `route-boundary`, `prop-drilling`, `zustand-patterns`, `no-client-server-only-import`, `no-db-origin-client-boundary`, `no-duplicate-schema-export`                                                                       | Dead exports, barrel files, boundary violations                                               |
 | **Duplication**  | `semantic-clone`, `syntactic-clone`, `complexity`                                                                                                                                                                                                                                                                                                               | Copy-pasted logic, high complexity                                                            |
 
-The 62 default rules run automatically on install — no configuration required. They stay silent on frameworks you don't use (the React/Next/Drizzle/Zod/Zustand checks are guarded by import/symbol resolution) and never enforce a style convention you didn't opt into. The 27 opinionated rules are one line away (below).
+The 61 default rules run automatically on install — no configuration required. They stay silent on frameworks you don't use (the React/Next/Drizzle/Zod/Zustand checks are guarded by import/symbol resolution) and never enforce a style convention you didn't opt into. The 25 opinionated rules are one line away (below).
 
 ### Every rule, explained
 
@@ -182,9 +182,6 @@ The 62 default rules run automatically on install — no configuration required.
 - `no-implicit-coercion` — Flags sneaky conversions: `==`, `+x`, `'' + x`, `!!x`.
 - `no-magic-numbers` — Pull unexplained numbers into named constants.
 - `no-multiline-comments` — Use line comments, not `/** */` JSDoc blocks.
-- `no-css-properties` — Don't type things as `CSSProperties` — use CSS Module classes.
-- `no-static-inline-style` — No `style={{…}}` with static values — use a class.
-- `css-class-existence` — Checks that a CSS-module class you reference actually exists.
 
 </details>
 
@@ -257,7 +254,7 @@ npx dlint --branch         # everything on the current branch
 npx dlint --format compact # one line per finding
 ```
 
-Zero config. The 62 default rules work immediately as a CI gate; opt into the 27 opinionated rules via a group (see [Configuration](#configuration)).
+Zero config. The 61 default rules work immediately as a CI gate; opt into the 25 opinionated rules via a group (see [Configuration](#configuration)).
 
 ### Use as a CI gate
 
@@ -422,7 +419,7 @@ export default {
 
 ### Rule groups
 
-Rules are bundled into **groups** you toggle with a single severity. The package ships one built-in group, **`opinionated`**, set to `off` — it holds the 27 style/architecture rules (plus a few opinionated sub-checks) a generic project may not share. Enable the whole set in one line:
+Rules are bundled into **groups** you toggle with a single severity. The package ships one built-in group, **`opinionated`**, set to `off` — it holds the 25 style/architecture rules (plus a few opinionated sub-checks) a generic project may not share. Enable the whole set in one line:
 
 ```typescript
 export default {
@@ -471,7 +468,7 @@ export default {
 
 Each `CONFIG` const maps to a camelCase option key (`MAX_LINES` → `maxLines`, `EXTERNAL_ID_NAMES` → `externalIdNames`). Options apply across all files and combine freely with `overrides` (severity, file scope) and `groups`.
 
-**The `opinionated` group:** `any-propagation`, `cache-caller-count`, `complexity`, `duplicate-import`, `error-handling`, `max-file-lines`, `narrow-param-type`, `no-css-properties`, `no-duplicated-constants`, `no-empty-function`, `no-local-constants`, `no-magic-numbers`, `no-multiline-comments`, `no-re-export`, `no-static-inline-style`, `no-underscore-prefix`, `prefer-literal-union`, `prefer-satisfies-over-as`, `promise-all-opportunity`, `readability`, `route-boundary`, `semantic-clone`, `simplification`, `syntactic-clone`, `type-precision`, `unbranded-type-consistency`, `unused-export` — plus the opinionated sub-checks of `performance`, `typescript`, and `no-implicit-coercion` (their universal sub-checks stay on).
+**The `opinionated` group:** `any-propagation`, `cache-caller-count`, `complexity`, `duplicate-import`, `error-handling`, `max-file-lines`, `narrow-param-type`, `no-duplicated-constants`, `no-empty-function`, `no-local-constants`, `no-magic-numbers`, `no-multiline-comments`, `no-re-export`, `no-underscore-prefix`, `prefer-literal-union`, `prefer-satisfies-over-as`, `promise-all-opportunity`, `readability`, `route-boundary`, `semantic-clone`, `simplification`, `syntactic-clone`, `type-precision`, `unbranded-type-consistency`, `unused-export` — plus the opinionated sub-checks of `performance`, `typescript`, and `no-implicit-coercion` (their universal sub-checks stay on).
 
 ## CLI
 
@@ -526,7 +523,7 @@ Lint only what you touched with `--changed` (uncommitted) or `--branch` (vs base
 
 ```
 install package
-  → 89 built-in rules loaded (62 active by default; the opinionated group ships off)
+  → 86 built-in rules loaded (61 active by default; the opinionated group ships off)
   → project-specific rules loaded from .dlint/rules/ (optional)
   → create ts.Program (once, shared)
   → for each file x each rule: check(ctx)

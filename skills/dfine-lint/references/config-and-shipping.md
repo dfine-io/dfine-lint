@@ -56,7 +56,7 @@ export default {
 A group bundles rule ids (and `ruleId:subCheckId` members) under one severity.
 
 - The package ships one built-in group, **`opinionated`**, with `severity: "off"`. It holds
-  the ~27 style/architecture rules (and a few opinionated sub-checks of `performance`,
+  the ~25 style/architecture rules (and a few opinionated sub-checks of `performance`,
   `typescript`, `no-implicit-coercion`) that a generic project may not share. So a zero-config
   run is a clean gate of universal bugs + framework-guarded checks; the opinionated set is opt-in:
   ```typescript
