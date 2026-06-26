@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+### Added
+
+- **`no-duplicate-schema-export` gains an `ignorePaths` option.** Files whose path includes a
+  configured fragment are excluded from the duplicate scan — for a deliberately-mirrored,
+  separately-bundled module whose copies never mix at runtime (e.g. an isolated `worker/`):
+  `ruleOptions: { "no-duplicate-schema-export": { ignorePaths: ["worker/"] } }`. Real in-program
+  duplicates are still flagged; default is `[]` (no behavior change for existing configs).
+
 ## 1.3.0
 
 ### Removed

@@ -462,6 +462,8 @@ export default {
     "unbranded-type-consistency": {
       externalIdNames: ["deviceId", "videoDeviceId"],
     },
+    // exclude a deliberately-mirrored, separately-bundled module from the duplicate scan
+    "no-duplicate-schema-export": { ignorePaths: ["worker/"] },
   },
 } satisfies DlintConfig;
 ```

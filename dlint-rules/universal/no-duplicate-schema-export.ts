@@ -6,9 +6,18 @@
 import ts from "typescript";
 import { defineRule } from "@dfine-io-gmbh/dlint";
 
+// ===========================================================================
+// CONFIG - defaults; override via ruleOptions["no-duplicate-schema-export"]
+// ===========================================================================
+// Path fragments excluded from the duplicate scan. Use for a deliberately-mirrored,
+// separately-bundled module whose copies never mix at runtime (e.g. "worker/"): its schemas
+// are not flagged as duplicates of the app's, while real in-program duplicates still are.
+const IGNORE_PATHS: string[] = [];
+// ===========================================================================
+
 type DuplicateMap = Map<string, readonly string[]>;
 
-const duplicateCache = new WeakMap<ts.Program, DuplicateMap>();
+const duplicateCache = new WeakMap<ts.Program, { key: string; map: DuplicateMap }>();
 
 function isExportedStatement(node: ts.Statement): boolean {
   if (!ts.canHaveModifiers(node)) return false;
@@ -20,11 +29,16 @@ function isZodSchemaType(type: ts.Type): boolean {
   return !!type.getProperty("parse") && !!type.getProperty("safeParse");
 }
 
-function buildDuplicateMap(program: ts.Program, checker: ts.TypeChecker): DuplicateMap {
+function buildDuplicateMap(
+  program: ts.Program,
+  checker: ts.TypeChecker,
+  ignorePaths: readonly string[],
+): DuplicateMap {
   const collected = new Map<string, string[]>();
 
   for (const sf of program.getSourceFiles()) {
     if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (ignorePaths.some((p) => sf.fileName.includes(p))) continue;
 
     for (const stmt of sf.statements) {
       if (!ts.isVariableStatement(stmt) || !isExportedStatement(stmt)) continue;
@@ -63,11 +77,18 @@ export default defineRule({
       "No duplicate *Schema exports — distinct .brand() calls create incompatible types",
   },
   check(ctx) {
-    let dupes = duplicateCache.get(ctx.program);
-    if (!dupes) {
-      dupes = buildDuplicateMap(ctx.program, ctx.checker);
-      duplicateCache.set(ctx.program, dupes);
+    const ignorePaths =
+      (ctx.options.ignorePaths as string[] | undefined) ?? IGNORE_PATHS;
+    const cacheKey = ignorePaths.join("\n");
+    let cached = duplicateCache.get(ctx.program);
+    if (!cached || cached.key !== cacheKey) {
+      cached = {
+        key: cacheKey,
+        map: buildDuplicateMap(ctx.program, ctx.checker, ignorePaths),
+      };
+      duplicateCache.set(ctx.program, cached);
     }
+    const dupes = cached.map;
 
     if (dupes.size === 0) return;
     const root = ctx.program.getCurrentDirectory();

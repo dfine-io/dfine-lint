@@ -1,6 +1,6 @@
 {
   "name": "@dfine-io-gmbh/dlint",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Semantic TypeScript linter built on the TS Compiler API — 86 rules covering quality, security, performance, and architecture, plus secret scanning and an HTML report dashboard.",
   "license": "MIT",
   "author": "dfine.io <support@dfine.io>",

@@ -110,6 +110,31 @@ print(" ".join(str(x) for x in sorted(set(exp))))
   fi
 fi
 
+# nodup: prove no-duplicate-schema-export's `ignorePaths` option. keep.ts exports Twin (also in
+# keep2.ts -> real duplicate, fires) and Shared (also in ignored/mirror.ts, but ignorePaths drops
+# that path -> silent). Only the Twin line carries an EXPECT marker.
+NODUP_CFG="$DIR/nodup-island.dlint.config.ts"
+NODUP_FILE="nodup-island/src/keep.ts"
+if [ -f "$NODUP_CFG" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "nodup" ]; }; then
+  expected="$(python3 -c '
+import sys, re
+exp = []
+for i, line in enumerate(open(sys.argv[1]), 1):
+    m = re.search(r"//\s*EXPECT:\s*[a-z][a-z0-9-]*(?:@(\d+))?", line)
+    if m:
+        exp.append(int(m.group(1)) if m.group(1) else i)
+print(" ".join(str(x) for x in sorted(set(exp))))
+' "$DIR/$NODUP_FILE")"
+  actual="$( (cd "$ROOT" && node "$CLI" --config "$NODUP_CFG" --rules no-duplicate-schema-export --files "$NODUP_FILE" --format json --no-error 2>/dev/null) \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(l) for l in sorted(set(x['line'] for x in d.get('diagnostics',[])))))" 2>/dev/null | xargs)"
+  if [ "$expected" = "$actual" ]; then
+    pass=$((pass+1)); echo "PASS  nodup  [$expected]"
+  else
+    fail=$((fail+1)); failed="$failed nodup"
+    echo "FAIL  nodup  | expected:[$expected]  actual:[$actual]"
+  fi
+fi
+
 # cli-robustness: an unexpected runtime error (here a malformed tsconfig) must surface as a friendly
 # 'dlint:' message with a non-zero exit and NO Node stack trace - the top-level guard in cli.ts.
 CLI_ISLAND="$DIR/cli-error-island"
