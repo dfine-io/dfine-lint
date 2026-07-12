@@ -2,12 +2,14 @@
 interface DbChain extends Promise<unknown[]> {
   from(t: unknown): DbChain;
   where(c: unknown): DbChain;
+  values(v: unknown): DbChain;
 }
 interface DbMock {
   select(...a: unknown[]): DbChain;
   insert(t: unknown): DbChain;
   update(t: unknown): DbChain;
   delete(t: unknown): DbChain;
+  execute(sql: unknown): DbChain;
   transaction(fn: unknown): Promise<unknown>;
 }
 declare const db: DbMock;
@@ -22,6 +24,14 @@ export async function tx() {
 export async function nPlusOne(ids: number[]) {
   for (const id of ids) {
     await db.select().from(table).where(id); // EXPECT: no-db-antipatterns
+  }
+}
+
+// NEGATIVE: chunked multi-row insert in a loop — a deliberate batch (Neon param/subrequest limit),
+// not per-row N+1. insert is excluded because inArray() batching only rewrites WHERE-clause ops.
+export async function chunkedInsert(chunks: unknown[][]) {
+  for (const chunk of chunks) {
+    await db.insert(table).values(chunk);
   }
 }
 

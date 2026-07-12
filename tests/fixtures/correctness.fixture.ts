@@ -69,10 +69,34 @@ export class WithSetter {
   }
 }
 
-// POSITIVE: await inside finally block
+// POSITIVE: await inside finally block (no catch — a rejected await can mask the try error)
 export async function awaitInFinally() {
   try {
     return 1;
+  } finally {
+    await Promise.resolve(); // EXPECT: correctness
+  }
+}
+
+// NEGATIVE: await in finally WITH a catch that CONSUMES the error — the try error is handled in the
+// catch, so the best-effort awaited cleanup cannot mask it (guaranteed-release pattern).
+export async function awaitInFinallyWithCatch(): Promise<number> {
+  try {
+    return 1;
+  } catch {
+    return 0;
+  } finally {
+    await Promise.resolve();
+  }
+}
+
+// POSITIVE: await in finally where the catch THROWS a new error — that error stays live through
+// finally, so the awaited cleanup can still mask it (the catch does not consume the error).
+export async function awaitInFinallyThrows(): Promise<number> {
+  try {
+    return 1;
+  } catch {
+    throw new Error("wrapped");
   } finally {
     await Promise.resolve(); // EXPECT: correctness
   }

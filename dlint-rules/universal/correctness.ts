@@ -137,15 +137,31 @@ export default defineRule({
             break;
           }
         }
-        // no-await-in-finally
-        function findAwait(n: ts.Node): void {
-          if (ts.isAwaitExpression(n)) {
-            ctx.reportAt(n, "Move await out of finally block -- can mask thrown errors", { action: "move-await", pattern: "Move await outside finally block" });
+        // no-await-in-finally: flag when a rejected await could mask a live error — i.e. the try has
+        // no catch (an unhandled try error survives into finally), OR the catch itself throws/rethrows
+        // (that error stays live through finally). A catch that only consumes the error makes an
+        // awaited best-effort cleanup safe, so it is not flagged.
+        const catchThrows = (clause: ts.CatchClause): boolean => {
+          let throws = false;
+          const scan = (n: ts.Node): void => {
+            if (throws) return;
+            if (ts.isThrowStatement(n)) { throws = true; return; }
+            if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) return;
+            ts.forEachChild(n, scan);
+          };
+          scan(clause.block);
+          return throws;
+        };
+        if (!node.catchClause || catchThrows(node.catchClause)) {
+          function findAwait(n: ts.Node): void {
+            if (ts.isAwaitExpression(n)) {
+              ctx.reportAt(n, "Move await out of finally block -- can mask thrown errors", { action: "move-await", pattern: "Move await outside finally block" });
+            }
+            if (!ts.isArrowFunction(n) && !ts.isFunctionExpression(n) && !ts.isFunctionDeclaration(n))
+              ts.forEachChild(n, findAwait);
           }
-          if (!ts.isArrowFunction(n) && !ts.isFunctionExpression(n) && !ts.isFunctionDeclaration(n))
-            ts.forEachChild(n, findAwait);
+          findAwait(node.finallyBlock);
         }
-        findAwait(node.finallyBlock);
       }
 
       // no-setter-return

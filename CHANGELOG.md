@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- **Consumer rules resolve dlint's bundled TypeScript.** A project rule loaded from your `rulesDir`
+  that imports `typescript` now always resolves dlint's bundled 6.x engine, not your project's
+  compiler. On a TS7/`tsgo` project the bare import previously resolved the API-less TS7 package and
+  crashed the run on the first rule. Bundled rules were already safe; this closes the same gap for
+  consumer rules.
+- **`no-db-antipatterns` no longer flags chunked inserts as N+1.** A `db.insert(...).values(chunk)`
+  inside a loop is a deliberate multi-row batch, not a per-row N+1. The N+1 check now covers only
+  `select`/`update`/`delete` — the operations `inArray()` batching actually rewrites.
+- **`no-await-in-finally` only fires when the `try` has no `catch`.** `try { } catch { } finally
+  { await ... }` is no longer flagged: the try error is already handled in the catch, so an awaited
+  best-effort cleanup cannot mask it. A catch-less `try { } finally { await ... }` is still flagged.
+- **`no-redundant-zod-parse` no longer flags `.safeParse()`.** Choosing `safeParse` means handling a
+  possible failure, so it is always a validation boundary. Only `.parse()` is checked now.
+
 ## 1.5.0
 
 ### Changed

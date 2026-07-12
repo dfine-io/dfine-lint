@@ -150,6 +150,38 @@ if [ -d "$CLI_ISLAND" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "cli-robustness" ]; }
   fi
   rm -f "$errfile"
 fi
+
+# ts7-alias: prove dlint's jiti alias pins its bundled TS6 engine for CONSUMER rules even when the
+# consumer project ships a TS7-native `typescript` with no in-process JS-API. Stage the stub into a
+# real node_modules (as an npm install would), then lint: the consumer rule imports bare `typescript`
+# and calls ts.isDebuggerStatement — it only fires if the alias resolved dlint's 6.x. Without the
+# alias the bare import resolves the API-less stub and the rule crashes → no finding (regression guard).
+TS7_ISLAND="$DIR/ts7-consumer-island"
+TS7_CFG="$DIR/ts7-consumer-island.dlint.config.ts"
+TS7_FILE="ts7-consumer-island/src/sample.ts"
+if [ -d "$TS7_ISLAND" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "ts7-alias" ]; }; then
+  mkdir -p "$TS7_ISLAND/node_modules"
+  rm -rf "$TS7_ISLAND/node_modules/typescript"
+  cp -r "$TS7_ISLAND/stub-typescript" "$TS7_ISLAND/node_modules/typescript"
+  expected="$(python3 -c '
+import sys, re
+exp = []
+for i, line in enumerate(open(sys.argv[1]), 1):
+    m = re.search(r"//\s*EXPECT:\s*[a-z][a-z0-9-]*(?:@(\d+))?", line)
+    if m:
+        exp.append(int(m.group(1)) if m.group(1) else i)
+print(" ".join(str(x) for x in sorted(set(exp))))
+' "$DIR/$TS7_FILE")"
+  actual="$( (cd "$ROOT" && node "$CLI" --config "$TS7_CFG" --rules ts7-engine-probe --files "$TS7_FILE" --format json --no-error 2>/dev/null) \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(l) for l in sorted(set(x['line'] for x in d.get('diagnostics',[])))))" 2>/dev/null | xargs)"
+  rm -rf "$TS7_ISLAND/node_modules"
+  if [ "$expected" = "$actual" ]; then
+    pass=$((pass+1)); echo "PASS  ts7-alias  [$expected]"
+  else
+    fail=$((fail+1)); failed="$failed ts7-alias"
+    echo "FAIL  ts7-alias  | expected:[$expected]  actual:[$actual]"
+  fi
+fi
 echo "────────────────────────"
 echo "PASS: $pass   FAIL: $fail"
 [ -n "$failed" ] && echo "failed:$failed"

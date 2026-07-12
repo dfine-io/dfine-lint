@@ -1,0 +1,6 @@
+{
+  "name": "typescript",
+  "version": "7.0.2",
+  "description": "Test stub: simulates a TS7-native typescript package with no in-process JS-API.",
+  "main": "index.js"
+}

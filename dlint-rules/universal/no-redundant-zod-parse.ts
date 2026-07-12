@@ -1,6 +1,7 @@
-// Flags redundant Zod .parse / .safeParse calls where the argument is already
-// branded / narrowly typed to the schema's output. The input must NOT
-// originate from a trust boundary (string / unknown / any) — those are legit parses.
+// Flags redundant Zod .parse() calls where the argument is already branded / narrowly typed to the
+// schema's output. The input must NOT originate from a trust boundary (string / unknown / any) — those
+// are legit parses. .safeParse() is never flagged: choosing safeParse (handling success:false) is an
+// inherently defensive act, so it is always a validation boundary regardless of the static type.
 // Structural Zod detection: receiver type exposes both `parse` and `safeParse` methods.
 import ts from "typescript";
 import { defineRule, isAssignableTo, hasDirective } from "@dfine-io-gmbh/dlint";
@@ -61,33 +62,10 @@ function receiverChainHasCatch(receiver: ts.Expression): boolean {
   return false;
 }
 
-function unwrapSafeParseReturn(returnType: ts.Type, checker: ts.TypeChecker): ts.Type | null {
-  if (!returnType.isUnion()) return null;
-  for (const variant of returnType.types) {
-    const successSym = variant.getProperty("success");
-    const dataSym = variant.getProperty("data");
-    if (!successSym || !dataSym) continue;
-    const dataDecl = dataSym.declarations?.[0];
-    if (!dataDecl) continue;
-    const successDecl = successSym.declarations?.[0] ?? dataDecl;
-    const successType = checker.getTypeOfSymbolAtLocation(successSym, successDecl);
-    if (!(successType.flags & ts.TypeFlags.BooleanLiteral)) continue;
-    if (checker.typeToString(successType) !== "true") continue;
-    return checker.getTypeOfSymbolAtLocation(dataSym, dataDecl);
-  }
-  return null;
-}
-
-function getSchemaOutputType(
-  call: ts.CallExpression,
-  methodName: "parse" | "safeParse",
-  checker: ts.TypeChecker,
-): ts.Type | null {
+function getSchemaOutputType(call: ts.CallExpression, checker: ts.TypeChecker): ts.Type | null {
   const sig = checker.getResolvedSignature(call);
   if (!sig) return null;
-  const returnType = sig.getReturnType();
-  if (methodName === "parse") return returnType;
-  return unwrapSafeParseReturn(returnType, checker);
+  return sig.getReturnType();
 }
 
 export default defineRule({
@@ -104,8 +82,9 @@ export default defineRule({
     ctx.walk((node) => {
       if (!ts.isCallExpression(node)) return;
       if (!ts.isPropertyAccessExpression(node.expression)) return;
-      const methodName = node.expression.name.text;
-      if (methodName !== "parse" && methodName !== "safeParse") return;
+      // Only .parse() is flaggable. .safeParse() is inherently defensive (caller handles success:false),
+      // so it is always a validation boundary — never redundant — regardless of the argument's static type.
+      if (node.expression.name.text !== "parse") return;
       if (node.arguments.length === 0) return;
 
       const receiverType = ctx.checker.getTypeAtLocation(node.expression.expression);
@@ -114,7 +93,7 @@ export default defineRule({
       // Defensive re-validation via `.catch(fallback)` is a legitimate trust-boundary pattern (JSONB / SDK output)
       if (receiverChainHasCatch(node.expression.expression)) return;
 
-      const outputType = getSchemaOutputType(node, methodName, ctx.checker);
+      const outputType = getSchemaOutputType(node, ctx.checker);
       if (!outputType) return;
 
       const argNode = node.arguments[0];
@@ -131,7 +110,7 @@ export default defineRule({
       const outTypeStr = ctx.checker.typeToString(outputType);
       ctx.reportAt(
         node.expression.name,
-        `Redundant Zod ${methodName}() — argument already typed '${argTypeStr}', matches schema output '${outTypeStr}'`,
+        `Redundant Zod parse() — argument already typed '${argTypeStr}', matches schema output '${outTypeStr}'`,
         {
           action: "drop-redundant-parse",
           pattern:

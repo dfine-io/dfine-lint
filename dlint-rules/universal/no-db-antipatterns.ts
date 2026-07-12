@@ -11,6 +11,27 @@ import { defineRule, isInsideLoop, isDbCall } from "@dfine-io-gmbh/dlint";
 const DRIZZLE_METHODS = ["select", "insert", "update", "delete"] as const;
 // ===========================================================================
 
+// N+1 covers only the ops inArray() can batch (WHERE-clause reads/mutations). insert (a deliberate
+// multi-row batch, not per-row), execute (raw SQL) and transaction are not inArray-batchable → not flagged.
+const N1_BATCHABLE_METHODS: readonly string[] = ["select", "update", "delete"];
+
+// Walk a call chain down to the db root and return the method invoked directly on it (db.<method>()).
+// Returns null when the chain has no db root. Lets the N+1 check exclude `insert`: a chunked
+// db.insert(t).values(chunk) in a loop is a deliberate multi-row batch, not per-row N+1.
+function rootDbMethod(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  methods: readonly string[],
+): string | null {
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+    const type = checker.getTypeAtLocation(node.expression);
+    if (methods.every((m) => type.getProperty(m) !== undefined)) return node.name.text;
+  }
+  if (ts.isCallExpression(node)) return rootDbMethod(node.expression, checker, methods);
+  if (ts.isPropertyAccessExpression(node)) return rootDbMethod(node.expression, checker, methods);
+  return null;
+}
+
 export default defineRule({
   meta: {
     category: "performance",
@@ -18,6 +39,7 @@ export default defineRule({
   },
   check(ctx) {
     const drizzleMethods = (ctx.options.drizzleMethods as readonly string[]) ?? DRIZZLE_METHODS;
+    const n1Methods = (ctx.options.n1BatchableMethods as readonly string[]) ?? N1_BATCHABLE_METHODS;
     ctx.walk((node) => {
       // db.transaction() is forbidden (Neon HTTP)
       if (
@@ -37,18 +59,22 @@ export default defineRule({
         );
       }
 
-      // N+1: await db.* inside loop
+      // N+1: await db.<select|update|delete>() inside a loop — the ops inArray() can batch. A chunked
+      // db.insert(t).values(chunk) (deliberate multi-row batch), raw db.execute() and db.transaction()
+      // are not inArray-batchable, so they are not flagged here.
       if (
         ts.isAwaitExpression(node) &&
         ts.isCallExpression(node.expression) &&
-        isDbCall(node.expression, ctx.checker, drizzleMethods) &&
         isInsideLoop(node)
       ) {
-        ctx.reportAt(node, "Replace await db in loop with inArray() batch -- N+1 query", {
-          action: "batch-query",
-          pattern:
-            "const items = await db.select().from(table).where(inArray(table.id, ids))",
-        });
+        const method = rootDbMethod(node.expression, ctx.checker, drizzleMethods);
+        if (method !== null && n1Methods.includes(method)) {
+          ctx.reportAt(node, "Replace await db in loop with inArray() batch -- N+1 query", {
+            action: "batch-query",
+            pattern:
+              "const items = await db.select().from(table).where(inArray(table.id, ids))",
+          });
+        }
       }
     });
   },

@@ -12,3 +12,8 @@ export const redundant = FileIdSchema.parse(alreadyBranded); // EXPECT: no-redun
 
 // NEGATIVE: parsing a raw string (legit trust-boundary parse)
 export const boundary = FileIdSchema.parse(raw);
+
+// NEGATIVE: safeParse of an already-branded value — never flagged. Choosing safeParse is inherently
+// defensive (caller handles success:false), so it is always a validation boundary (e.g. a JSONB /
+// $type() DB column whose runtime value is not guaranteed despite the static type).
+export const safe = FileIdSchema.safeParse(alreadyBranded);
