@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+### Changed
+
+- **dlint ships its own TypeScript engine.** `typescript` moves from a peer dependency to a
+  bundled dependency pinned to the last JavaScript-based line (`^6.0.3`). dlint now lints projects
+  independently of the compiler they build with — including projects on the Go-native TypeScript 7
+  (`tsgo`), whose package no longer exposes the in-process `createProgram`/`getTypeChecker` API that
+  dlint's 86 rules run on. No config change needed, and consumers no longer need their own
+  JavaScript `typescript` installed. A port to the native TS 7.1 API is on the roadmap.
+
 ## 1.4.0
 
 ### Added

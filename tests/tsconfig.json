@@ -9,7 +9,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["node", "react"]
   },
   "include": ["fixtures/**/*.ts", "fixtures/**/*.tsx"]
 }

@@ -256,6 +256,12 @@ npx dlint --format compact # one line per finding
 
 Zero config. The 61 default rules work immediately as a CI gate; opt into the 25 opinionated rules via a group (see [Configuration](#configuration)).
 
+> **TypeScript 7 / tsgo:** dlint carries its own JavaScript-based TypeScript engine (the last
+> JavaScript-based line, 6.x) and analyses your code with it, independently of the compiler your
+> project builds with. A project can move to the Go-native TypeScript 7 (`tsgo`) and dlint keeps
+> linting it, because dlint does not use your project's compiler. A port to the native TS 7.1 API
+> (expected ~Oct 2026) is on the roadmap.
+
 ### Use as a CI gate
 
 `dlint` exits non-zero as soon as it finds an error, so it drops straight into any pipeline:

@@ -11,3 +11,5 @@ coverage/
 .dlint/
 .claude/
 CLAUDE.md
+dfine.config.json
+docs/system/ts7-native-migration.md

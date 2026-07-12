@@ -1,6 +1,6 @@
 {
   "name": "@dfine-io-gmbh/dlint",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Semantic TypeScript linter built on the TS Compiler API — 86 rules covering quality, security, performance, and architecture, plus secret scanning and an HTML report dashboard.",
   "license": "MIT",
   "author": "dfine.io <support@dfine.io>",
@@ -64,17 +64,14 @@
     "prepublishOnly": "rm -rf build tsconfig.tsbuildinfo && tsc && chmod +x build/cli.js"
   },
   "dependencies": {
-    "ignore": "^7.0.0",
-    "jiti": "^2.6.1"
-  },
-  "peerDependencies": {
-    "typescript": ">=5.0"
+    "ignore": "^7.0.6",
+    "jiti": "^2.7.0",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/node": "^25.3.0",
-    "@types/react": "^19.2.15",
-    "react": "^19.2.6",
-    "typescript": "^5.9.3",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.17",
+    "react": "^19.2.7",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   }

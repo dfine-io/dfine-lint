@@ -1,11 +1,21 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { createJiti } from "jiti";
 import type { DlintConfig, RuleDefinition, ExtractorDefinition } from "../types.js";
 import { resolveGroups } from "./groups.js";
 
-const jiti = createJiti(import.meta.url, { interopDefault: true });
+// Consumer project rules (.dlint/rules/*.ts) are jiti-loaded from the CONSUMER's directory, so their bare
+// `import ts from "typescript"` would resolve the consumer's typescript — on a TS7-native project that package
+// has no in-process JS-API (SyntaxKind/isX/createSourceFile are undefined) → the rule crashes on load and takes
+// the whole run with it. Alias `typescript` to dlint's own bundled 6.x engine so EVERY jiti-loaded rule (bundled
+// AND consumer) resolves the JS-API compiler deterministically — this is the isolation the TS7 interim promises.
+const require = createRequire(import.meta.url);
+const jiti = createJiti(import.meta.url, {
+  interopDefault: true,
+  alias: { typescript: require.resolve("typescript") },
+});
 
 export async function loadConfig(projectPath: string, configFile?: string): Promise<DlintConfig> {
   const configPath = configFile ? resolve(configFile) : join(projectPath, "dlint.config.ts");

@@ -12,7 +12,6 @@
     "incremental": false,
     "declaration": false,
     "declarationMap": false,
-    "baseUrl": ".",
     "paths": {
       "@dfine-io-gmbh/dlint": ["./src/index.ts"]
     }
