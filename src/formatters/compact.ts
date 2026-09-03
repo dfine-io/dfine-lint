@@ -8,5 +8,8 @@ export function formatCompact(result: LintResult, _: CliOptions): string {
   lines.push(
     `\n${result.errorCount} errors, ${result.warningCount} warnings`
   );
+  for (const s of result.skippedRules ?? []) {
+    lines.push(`skipped rule ${s.file}: ${s.reason}`);
+  }
   return lines.join("\n") + "\n";
 }

@@ -59,6 +59,16 @@ sometimes a `dlint.config.ts`, run from that directory:
 - `tests/options-island/` + `options-island.dlint.config.ts` - proves `ruleOptions` changes
   behavior without copying a rule (e.g. `max-file-lines` fires on a small file only because
   `maxLines: 5` is set).
+- `tests/nodup-island/` + `nodup-island.dlint.config.ts` - proves `no-duplicate-schema-export`'s
+  `ignorePaths` option silences a mirrored copy while a real duplicate still fires.
+- `tests/cli-error-island/` - a malformed `tsconfig.json`; asserts a runtime failure surfaces as a
+  friendly `dlint:` message with a non-zero exit and no Node stack trace.
+- `tests/ts7-consumer-island/` + `ts7-consumer-island.dlint.config.ts` - a TS7-style stub
+  `typescript` (no in-process JS API) staged into `node_modules`; proves a consumer rule importing
+  bare `typescript` still resolves dlint's own bundled engine.
+- `tests/list-rules-island/` + `list-rules-length` / `list-rules-nodesc` configs - drive the
+  failure branches of `--list-rules`: an over-long description must be reported, and a rule with no
+  description must be skipped and named while the run still exits 0.
 
 Pattern for a new mechanic test: add the island dir + a `.dlint.config.ts`, then add a small
 block to `tests/run.sh` (mirror the `config-resolve` / `options` blocks) that runs dlint with

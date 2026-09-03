@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createJiti } from "jiti";
-import type { DlintConfig, RuleDefinition, ExtractorDefinition } from "../types.js";
+import type { DlintConfig, RuleDefinition, ExtractorDefinition, SkippedRule } from "../types.js";
 import { resolveGroups } from "./groups.js";
 
 // Consumer project rules (.dlint/rules/*.ts) are jiti-loaded from the CONSUMER's directory, so their bare
@@ -43,7 +43,7 @@ function collectRuleFiles(dir: string): string[] {
 export async function loadRules(
   projectPath: string,
   config: DlintConfig
-): Promise<RuleDefinition[]> {
+): Promise<{ rules: RuleDefinition[]; skipped: SkippedRule[] }> {
   const overrideMap = new Map<string, "error" | "warning" | "off">();
   for (const o of config.overrides ?? []) {
     if (o.files) continue; // File-scoped overrides handled in engine.ts
@@ -69,13 +69,29 @@ export async function loadRules(
     throw new Error("No rules found — enable bundledRules or set a valid rulesDir.");
   }
 
+  // A broken rule file is skipped and reported, never fatal: one malformed project rule must not
+  // take down a whole run. Bundled rules ship validated, so in practice this only hits rulesDir.
   const byId = new Map<string, RuleDefinition>();
+  const skipped: SkippedRule[] = [];
   for (const dir of dirs) {
     for (const filePath of collectRuleFiles(dir)) {
-      const mod = await jiti.import(filePath);
-      const rule = (mod as { default: RuleDefinition }).default;
+      let rule: RuleDefinition | undefined;
+      try {
+        const mod = await jiti.import(filePath);
+        rule = (mod as { default: RuleDefinition }).default;
+      } catch (err) {
+        const first = (err as Error).message.split("\n")[0];
+        skipped.push({ file: basename(filePath), reason: first ?? "failed to load" });
+        continue;
+      }
       if (!rule?.check || !rule?.meta) {
-        throw new Error(`Invalid rule (missing check/meta): ${basename(filePath)}`);
+        skipped.push({ file: basename(filePath), reason: "missing check/meta" });
+        continue;
+      }
+      // meta.description is required by the type, but jiti strips types, so check it at load time.
+      if (typeof rule.meta.description !== "string" || !rule.meta.description.trim()) {
+        skipped.push({ file: basename(filePath), reason: "missing meta.description" });
+        continue;
       }
       rule.id = basename(filePath, ".ts");
       const baseName = filePath.replace(dir + "/", "").replace(/\.ts$/, "");
@@ -87,7 +103,7 @@ export async function loadRules(
       byId.set(rule.id, rule);
     }
   }
-  return [...byId.values()];
+  return { rules: [...byId.values()], skipped };
 }
 
 export async function loadExtractors(

@@ -53,7 +53,8 @@ dlint ships ~86 universal rules, and most tunable values are exposed via `ruleOp
 project changes a threshold, list, or allow-set without copying the rule. Before writing a
 new rule, check:
 
-- **Already detected?** Grep `dlint-rules/universal/` and read the README rule table.
+- **Already detected?** Run `dlint --list-rules` (JSON: id + one-line description of every loaded
+  rule, project rules included), grep `dlint-rules/universal/`, and read the README rule table.
 - **Coverable by `ruleOptions`?** A threshold, allow/deny list, method set, route pairs, or
   id allow-list - if yes, configure it; do not create a near-duplicate and do not copy a
   universal rule into a `rulesDir` just to change a value.
@@ -96,7 +97,7 @@ const MIN_CALLERS = 2;
 export default defineRule({
   meta: {
     category: "performance", // "security" | "performance" | "quality" | "architecture"
-    description: "What the rule enforces, one line",
+    description: "What the rule enforces, one line", // required, keep it under 120 chars
     // severity?: "error" | "warning"   // optional in-rule default
     // subChecks?: number               // if the rule bundles several checks
   },

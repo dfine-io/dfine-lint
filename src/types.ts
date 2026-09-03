@@ -93,6 +93,15 @@ export interface LintResult {
   warningCount: number;
   durationMs: number;
   fixableCount: number;
+  /** Rule files that failed to load and were skipped; the run continues without them. */
+  skippedRules?: SkippedRule[];
+}
+
+export interface SkippedRule {
+  /** Rule file that could not be loaded, e.g. "my-rule.ts". */
+  file: string;
+  /** Why it was skipped, e.g. "missing meta.description". */
+  reason: string;
 }
 
 export interface CliOptions {
@@ -111,6 +120,8 @@ export interface CliOptions {
   fix: boolean;
   dryRun: boolean;
   extract: boolean;
+  /** --list-rules: emit the loaded rule set as JSON (id + description), no linting. */
+  listRules: boolean;
 }
 
 export interface RuleOverride {

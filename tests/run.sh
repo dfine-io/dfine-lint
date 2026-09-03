@@ -182,6 +182,58 @@ print(" ".join(str(x) for x in sorted(set(exp))))
     echo "FAIL  ts7-alias  | expected:[$expected]  actual:[$actual]"
   fi
 fi
+# list-rules: `dlint --list-rules` emits the loaded rule set as JSON (id + description) before any
+# file scan or Program build. Five real runs, one verdict: (1) tests/dlint.config.ts enables the
+# opinionated group, so every bundled rule passes the contract check (parseable, non-empty, exactly
+# the two keys, no empty field, no description over 120 chars); (2) cli-error-island's tsconfig is
+# malformed, so rc 0 proves no Program was built; (3) ts7-consumer-island sets bundledRules: false,
+# so the inventory is exactly its one consumer rule, which proves the rulesDir merge; (4) the
+# bad-length island must come back as too-long, proving the length check is not dead; (5) the
+# no-desc island must still exit 0 with an empty inventory and report the reason on stderr, proving
+# a malformed project rule is skipped and named instead of taking the whole run down.
+if [ -z "$ONLY" ] || [ "$ONLY" = "list-rules" ]; then
+  LR_CHECK='
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("invalid-json"); sys.exit()
+if not isinstance(d, list) or not d:
+    print("empty"); sys.exit()
+for r in d:
+    if sorted(r.keys()) != ["description", "id"]:
+        print("bad-keys:" + str(sorted(r.keys()))); sys.exit()
+    if not r["id"] or not r["description"]:
+        print("empty-field:" + str(r.get("id"))); sys.exit()
+    if len(r["description"]) > 120:
+        print("too-long:%s=%d" % (r["id"], len(r["description"]))); sys.exit()
+print("ok:%d" % len(d))
+'
+  lr_out="$( (cd "$ROOT" && node "$CLI" --config "$DIR/dlint.config.ts" --list-rules 2>/dev/null) )"
+  lr_rc=$?
+  lr_verdict="$(printf '%s' "$lr_out" | python3 -c "$LR_CHECK" 2>/dev/null)"
+  ( cd "$CLI_ISLAND" && node "$CLI" --config "$CLI_ISLAND/dlint.config.ts" --list-rules ) >/dev/null 2>&1
+  lr_island_rc=$?
+  lr_ids="$( (cd "$ROOT" && node "$CLI" --config "$TS7_CFG" --list-rules 2>/dev/null) \
+    | python3 -c "import json,sys; print(','.join(r['id'] for r in json.load(sys.stdin)))" 2>/dev/null)"
+  lr_long="$( (cd "$ROOT" && node "$CLI" --config "$DIR/list-rules-length.dlint.config.ts" --list-rules 2>/dev/null) \
+    | python3 -c "$LR_CHECK" 2>/dev/null)"
+  lr_errfile="$(mktemp)"
+  lr_nodesc_out="$( (cd "$ROOT" && node "$CLI" --config "$DIR/list-rules-nodesc.dlint.config.ts" --list-rules 2>"$lr_errfile") )"
+  lr_nodesc_rc=$?
+  lr_nodesc_err="$(cat "$lr_errfile")"; rm -f "$lr_errfile"
+  if [ "$lr_rc" -ne 0 ]; then lr_verdict="rc=$lr_rc"; fi
+  if [ "$lr_island_rc" -ne 0 ]; then lr_verdict="no-program:rc=$lr_island_rc"; fi
+  if [ "$lr_ids" != "ts7-engine-probe" ]; then lr_verdict="rulesdir:ids=$lr_ids"; fi
+  case "$lr_long" in too-long:*) ;; *) lr_verdict="length-branch-dead:$lr_long" ;; esac
+  if [ "$lr_nodesc_rc" -ne 0 ]; then lr_verdict="nodesc-fatal:rc=$lr_nodesc_rc"; fi
+  if [ "$lr_nodesc_out" != "[]" ]; then lr_verdict="nodesc-leaked:$lr_nodesc_out"; fi
+  case "$lr_nodesc_err" in *"missing meta.description"*) ;; *) lr_verdict="nodesc-unreported" ;; esac
+  case "$lr_verdict" in
+    ok:*) pass=$((pass+1)); echo "PASS  list-rules  [$lr_verdict]" ;;
+    *) fail=$((fail+1)); failed="$failed list-rules"; echo "FAIL  list-rules  | $lr_verdict" ;;
+  esac
+fi
 echo "────────────────────────"
 echo "PASS: $pass   FAIL: $fail"
 [ -n "$failed" ] && echo "failed:$failed"

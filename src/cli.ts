@@ -86,6 +86,7 @@ Autofix:
 
 Analysis:
   --extract                     Output extractor data as JSON (no linting)
+  --list-rules                  Output loaded rules as JSON: id + description (no linting)
 
 Exit codes: 0 = clean · 1 = findings · 2 = usage/config error
 `);
@@ -142,6 +143,7 @@ const { values } = (() => {
         fix: { type: "boolean", default: false },
         "dry-run": { type: "boolean", default: false },
         extract: { type: "boolean", default: false },
+        "list-rules": { type: "boolean", default: false },
       },
     });
   } catch (err) {
@@ -176,6 +178,7 @@ const opts = {
   fix: values.fix ?? false,
   dryRun: values["dry-run"] ?? false,
   extract: values.extract ?? false,
+  listRules: values["list-rules"] ?? false,
 } satisfies CliOptions;
 
 // Validate format
@@ -187,16 +190,30 @@ if (!validFormats.has(opts.format)) {
   process.exit(2);
 }
 
-const { config, rules } = await (async () => {
+const { config, rules, skippedRules } = await (async () => {
   try {
     const config = await loadConfig(opts.path, opts.configPath);
-    const rules = await loadRules(opts.path, config);
-    return { config, rules };
+    const { rules, skipped } = await loadRules(opts.path, config);
+    return { config, rules, skippedRules: skipped };
   } catch (err) {
     process.stderr.write(`dlint: ${(err as Error).message}\n`);
     process.exit(2);
   }
 })();
+
+// A broken rule never fails the run; report it on stderr so stdout stays a clean report/JSON.
+for (const s of skippedRules) {
+  process.stderr.write(`dlint: skipped rule ${s.file}: ${s.reason}\n`);
+}
+
+// Rule inventory as JSON. Emitted before any file scan or Program build, so no tsconfig is needed.
+if (opts.listRules) {
+  const list = rules
+    .map((r) => ({ id: r.id, description: r.meta.description }))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  process.stdout.write(JSON.stringify(list, null, 2) + "\n");
+  process.exit(0);
+}
 
 // Validate rule IDs
 if (opts.rules.length > 0) {
@@ -255,6 +272,7 @@ if (opts.extract) {
 }
 
 const result = lint(opts, rules, config);
+if (skippedRules.length > 0) result.skippedRules = skippedRules;
 
 if (opts.fix && result.fixableCount > 0) {
   const { applyFixes } = await import("./core/fixer.js");

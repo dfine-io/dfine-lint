@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.2
+
+### Added
+
+- **`dlint --list-rules` prints the loaded rule set as JSON.** One entry per active rule with its
+  id and a one-line description (max 120 characters), sorted by id. It needs no tsconfig and builds
+  no Program, so it runs in any repository that has a `dlint.config.ts`, and it includes project
+  rules from `rulesDir`. Built for tooling that needs to know what dlint can detect: a review agent
+  reads the inventory and checks a proposed change against it.
+
+### Changed
+
+- **A broken rule file no longer aborts the run.** A rule that throws on import, or whose `meta` is
+  missing a `description`, is now skipped and reported by name instead of ending the whole lint.
+  The run continues with the remaining rules; the skipped files appear in the output and under
+  `skippedRules` in `--format json`. In practice this only affects project rules in your
+  `rulesDir` — bundled rules ship validated. A `description` was always required by the type, but
+  jiti strips types at runtime, so it is now checked when the rule loads.
+
 ## 1.5.1
 
 ### Fixed
