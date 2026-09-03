@@ -233,7 +233,7 @@ export default defineRule({
   meta: {
     category: "quality",
     description:
-      "useState anti-patterns that must be discriminated unions: bool+ref coupling, multi-nullable, status+nullable, >=5 useState",
+      "useState anti-patterns that must be discriminated unions: bool+ref, multi-nullable, status+nullable, >=5 useState",
     subChecks: 4,
   },
   check(ctx) {

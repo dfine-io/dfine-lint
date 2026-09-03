@@ -110,3 +110,4 @@ editing rule source.
   load; enable its group or set a severity override to run it explicitly.)
 - `--config <file>` - load this config; `rulesDir`/`tsconfig`/scan base resolve relative to it.
 - `--format json|table|compact|html`, `--fix` (+ `--dry-run`), `--no-error`.
+- `--list-rules` - the loaded rule set as JSON (id + description); no linting, no tsconfig needed.

@@ -26,6 +26,9 @@ export function formatTable(result: LintResult, opts: CliOptions): string {
   lines.push(
     `\n${result.errorCount} errors, ${result.warningCount} warnings\n`
   );
+  for (const s of result.skippedRules ?? []) {
+    lines.push(`${YELLOW}⚠${RESET} skipped rule ${s.file}: ${s.reason}`);
+  }
   if (opts.benchmark)
     lines.push(`${DIM}Duration: ${result.durationMs}ms${RESET}\n`);
   return lines.join("\n");

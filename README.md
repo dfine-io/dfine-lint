@@ -291,6 +291,8 @@ export default {
 
 Every `.ts` file in `.dlint/rules/` becomes a rule. Subdirectories work. The built-in universal rules load straight from the package and always run alongside your project-specific ones — they update with `pnpm update`, no sync step or copied rule files. A project rule with the same id overrides a built-in one.
 
+A rule file that cannot be loaded, for example one that throws on import or whose `meta` has no `description`, is skipped and named in the output instead of failing the whole run. The lint still runs with the remaining rules, and `--format json` lists the skipped files under `skippedRules`.
+
 ## Agent skill (recommended)
 
 This repo ships a portable **agent skill** — a `SKILL.md` knowledge pack any skill-aware coding
@@ -508,6 +510,7 @@ Autofix:
 
 Analysis:
   --extract             Output extractor data as JSON
+  --list-rules          Output loaded rules as JSON: id + description
 ```
 
 ### Run from anywhere
