@@ -1,0 +1,18 @@
+// Type-checks a project rule pack. Extend it from the pack's own tsconfig:
+//   { "extends": "@dfine-io-gmbh/dlint/tsconfig.rules.json", "include": ["rules/**/*.ts"] }
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "paths": {
+      "typescript": ["../../typescript"],
+      "@dfine-io-gmbh/dlint": ["./build/index.d.ts"]
+    }
+  }
+}

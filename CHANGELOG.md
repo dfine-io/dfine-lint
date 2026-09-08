@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.3
+
+### Added
+
+- **A shipped `tsconfig.rules.json` for type-checking project rules.** Rules load through jiti,
+  which strips types, so an unchecked type error in a rule never crashes — it becomes a silent wrong
+  value. A rule pack now extends the shipped config instead of hand-rolling one:
+  `{ "extends": "@dfine-io-gmbh/dlint/tsconfig.rules.json", "include": ["rules/**/*.ts"] }`, then
+  `npx tsc -p .dlint/tsconfig.json`. It maps `typescript` to the compiler dlint bundles, so rules are
+  checked against the engine that runs them. That is what makes it work when the project builds with
+  a different TypeScript, such as the Go-native 7.x, whose package carries no types to check against.
+- **`dlint init` writes `.dlint/tsconfig.json`.** Existing files are left untouched.
+- **`package.json` is exported.** Tooling can read the installed version again; the previous
+  `exports` map rejected the subpath.
+
 ## 1.5.2
 
 ### Added

@@ -47,9 +47,26 @@ export default {
     console.log("dlint: created dlint.config.ts");
   }
 
+  // Project rules are loaded through jiti, which strips types — without this a type error in a rule
+  // becomes a silent wrong value instead of a failure.
+  const rulesTsconfigPath = join(projectPath, ".dlint", "tsconfig.json");
+  if (!existsSync(rulesTsconfigPath)) {
+    writeFileSync(
+      rulesTsconfigPath,
+      `// Type-checks the project rules. Run: npx tsc -p .dlint/tsconfig.json
+{
+  "extends": "@dfine-io-gmbh/dlint/tsconfig.rules.json",
+  "include": ["rules/**/*.ts"]
+}
+`,
+    );
+    console.log("dlint: created .dlint/tsconfig.json");
+  }
+
   console.log(
     "dlint: ready — universal rules load from the package; add project rules in .dlint/rules/",
   );
+  console.log("dlint: type-check them with `npx tsc -p .dlint/tsconfig.json`");
   process.exit(0);
 }
 

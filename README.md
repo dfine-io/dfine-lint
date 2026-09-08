@@ -293,6 +293,23 @@ Every `.ts` file in `.dlint/rules/` becomes a rule. Subdirectories work. The bui
 
 A rule file that cannot be loaded, for example one that throws on import or whose `meta` has no `description`, is skipped and named in the output instead of failing the whole run. The lint still runs with the remaining rules, and `--format json` lists the skipped files under `skippedRules`.
 
+### Type-checking your rules
+
+Rules are loaded through jiti, which strips types at runtime. An unchecked type error therefore never crashes — it turns into a silent wrong value. `dlint init` writes a `.dlint/tsconfig.json` for this; in an existing project, add it yourself:
+
+```json
+{
+  "extends": "@dfine-io-gmbh/dlint/tsconfig.rules.json",
+  "include": ["rules/**/*.ts"]
+}
+```
+
+```bash
+npx tsc -p .dlint/tsconfig.json
+```
+
+The shipped config points `typescript` at the compiler dlint bundles, so your rules are checked against the same engine that runs them. That matters when your project builds with a different TypeScript, for example the Go-native 7.x, whose package exposes no types to check against.
+
 ## Agent skill (recommended)
 
 This repo ships a portable **agent skill** — a `SKILL.md` knowledge pack any skill-aware coding

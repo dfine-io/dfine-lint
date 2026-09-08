@@ -111,3 +111,16 @@ editing rule source.
 - `--config <file>` - load this config; `rulesDir`/`tsconfig`/scan base resolve relative to it.
 - `--format json|table|compact|html`, `--fix` (+ `--dry-run`), `--no-error`.
 - `--list-rules` - the loaded rule set as JSON (id + description); no linting, no tsconfig needed.
+
+## Type-checking a rule pack
+
+jiti strips types at runtime, so an unchecked type error in a rule becomes a silent wrong value
+rather than a crash. dlint ships `tsconfig.rules.json` for this; `dlint init` writes the pack side:
+
+```json
+{ "extends": "@dfine-io-gmbh/dlint/tsconfig.rules.json", "include": ["rules/**/*.ts"] }
+```
+
+Run it with `npx tsc -p .dlint/tsconfig.json`. The shipped config maps `typescript` to the compiler
+dlint bundles, so rules are checked against the engine that actually runs them - necessary when the
+project itself builds with a different TypeScript (a Go-native 7.x package carries no types).

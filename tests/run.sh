@@ -234,6 +234,38 @@ print("ok:%d" % len(d))
     *) fail=$((fail+1)); failed="$failed list-rules"; echo "FAIL  list-rules  | $lr_verdict" ;;
   esac
 fi
+# rules-tsconfig: dlint ships tsconfig.rules.json so a project rule pack can type-check its rules
+# (jiti strips types at runtime, so an unchecked rule fails silently). The regression this guards is
+# itself silent: without the exports subpath, `extends` fails with TS6053 and tsc then reports an
+# unresolvable 'typescript' instead, which reads like a paths bug. Asserts the file ships, parses,
+# carries both path mappings, and is reachable through BOTH files and exports.
+if [ -z "$ONLY" ] || [ "$ONLY" = "rules-tsconfig" ]; then
+  rt_verdict="$( (cd "$ROOT" && python3 -c '
+import json, re, sys
+def load(p):
+    return json.loads(re.sub(r"^\s*//.*$", "", open(p).read(), flags=re.M))
+try:
+    t = load("tsconfig.rules.json")
+except Exception as e:
+    print("unreadable:%s" % e); sys.exit()
+paths = t.get("compilerOptions", {}).get("paths", {})
+if paths.get("typescript") != ["../../typescript"]:
+    print("bad-ts-path:%s" % paths.get("typescript")); sys.exit()
+if paths.get("@dfine-io-gmbh/dlint") != ["./build/index.d.ts"]:
+    print("bad-dlint-path:%s" % paths.get("@dfine-io-gmbh/dlint")); sys.exit()
+pkg = json.load(open("package.json"))
+if "tsconfig.rules.json" not in pkg.get("files", []):
+    print("not-in-files"); sys.exit()
+if pkg.get("exports", {}).get("./tsconfig.rules.json") != "./tsconfig.rules.json":
+    print("not-in-exports"); sys.exit()
+print("ok")
+') 2>/dev/null)"
+  if [ "$rt_verdict" = "ok" ]; then
+    pass=$((pass+1)); echo "PASS  rules-tsconfig  [shipped + reachable]"
+  else
+    fail=$((fail+1)); failed="$failed rules-tsconfig"; echo "FAIL  rules-tsconfig  | $rt_verdict"
+  fi
+fi
 echo "────────────────────────"
 echo "PASS: $pass   FAIL: $fail"
 [ -n "$failed" ] && echo "failed:$failed"
