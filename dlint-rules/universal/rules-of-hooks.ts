@@ -1,8 +1,8 @@
 // Enforces React Rules of Hooks: hooks must be called at the top level of
 // components/custom hooks — never inside conditions, loops, or after early returns.
-// Uses TypeChecker to verify React hook origin, isInsideLoop from SDK.
+// A use* callee declared in node_modules counts as a hook; local custom hooks resolve via their body.
 import ts from "typescript";
-import { defineRule, isInsideLoop, isFromPackage, unwrapPromiseType, resolveCallBody } from "@dfine-io-gmbh/dlint";
+import { defineRule, isInsideLoop, isNodeModulesDeclaration, resolveSymbol, unwrapPromiseType, resolveCallBody } from "@dfine-io-gmbh/dlint";
 
 function isJsxReturnType(type: ts.Type, checker: ts.TypeChecker): boolean {
   const unwrapped = unwrapPromiseType(type, checker);
@@ -12,11 +12,16 @@ function isJsxReturnType(type: ts.Type, checker: ts.TypeChecker): boolean {
   return props.some(p => p.name === "type") && props.some(p => p.name === "props") && props.some(p => p.name === "key");
 }
 
-function bodyContainsReactHook(body: ts.Node, checker: ts.TypeChecker): boolean {
+function isPackageHook(callee: ts.Identifier, checker: ts.TypeChecker): boolean {
+  const sym = checker.getSymbolAtLocation(callee);
+  return callee.text.startsWith("use") && !!sym && isNodeModulesDeclaration(resolveSymbol(checker, sym));
+}
+
+function bodyCallsPackageHook(body: ts.Node, checker: ts.TypeChecker): boolean {
   let found = false;
   function visit(n: ts.Node): void {
     if (found) return;
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && isFromPackage(n.expression, checker, "react")) {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && isPackageHook(n.expression, checker)) {
       found = true; return;
     }
     if (!ts.isArrowFunction(n) && !ts.isFunctionExpression(n)) ts.forEachChild(n, visit);
@@ -31,12 +36,12 @@ function isHookCall(node: ts.CallExpression, checker: ts.TypeChecker): boolean {
   // React hooks follow the "use" naming convention (useState, useEffect, useContext, etc.)
   // Factory functions (createContext, createElement, forwardRef, memo, lazy) are NOT hooks
   if (!name.startsWith("use")) return false;
-  // React built-in hooks: verified via package resolution
-  if (isFromPackage(node.expression, checker, "react")) return true;
-  // Local custom hooks: resolve body, check if it calls React hooks
+  // Package hooks (React built-ins and library hooks such as zustand's useStore)
+  if (isPackageHook(node.expression, checker)) return true;
+  // Local custom hooks: resolve body, check if it calls a package hook
   const body = resolveCallBody(checker, node);
   if (!body) return false;
-  return bodyContainsReactHook(body, checker);
+  return bodyCallsPackageHook(body, checker);
 }
 
 function getEnclosingFunction(node: ts.Node): ts.FunctionLikeDeclaration | undefined {
@@ -61,7 +66,7 @@ function isComponentOrHook(fn: ts.FunctionLikeDeclaration, checker: ts.TypeCheck
     if (isJsxReturnType(returnType, checker)) return true;
   }
   if (!fn.body) return false;
-  return bodyContainsReactHook(fn.body, checker);
+  return bodyCallsPackageHook(fn.body, checker);
 }
 
 function isConditionallyExecuted(node: ts.Node, boundary: ts.Node): boolean {

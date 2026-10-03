@@ -1,30 +1,51 @@
 import ts from "typescript";
 import { resolve, dirname } from "node:path";
 import { mkdirSync } from "node:fs";
+import { resolveSymbol } from "../helpers/ast.js";
+
+// An error inside a compilerOptions object (e.g. an option only a newer TypeScript knows) leaves the file set intact
+function isOptionError(d: ts.Diagnostic): boolean {
+  const root = d.file?.statements[0];
+  if (d.start === undefined || !root || !ts.isExpressionStatement(root) || !ts.isObjectLiteralExpression(root.expression)) return false;
+  const options = root.expression.properties.find(
+    (p) => ts.isPropertyAssignment(p) && ts.isStringLiteral(p.name) && p.name.text === "compilerOptions"
+  );
+  return !!options && d.start >= options.pos && d.start < options.end;
+}
+
+// --format html builds two programs from one tsconfig: print each warning once per process
+const reportedWarnings = new Set<string>();
 
 export function createProgram(
   projectPath: string,
   tsconfigPath?: string
 ): { program: ts.Program; saveBuildInfo: () => void } {
-  const configPath = ts.findConfigFile(
-    projectPath,
-    ts.sys.fileExists,
-    tsconfigPath ?? "tsconfig.json"
-  );
-  if (!configPath) throw new Error(`No tsconfig.json found in ${projectPath}`);
-  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (configFile.error) {
-    throw new Error(
-      ts.flattenDiagnosticMessageText(configFile.error.messageText, "\n")
-    );
-  }
-  const parsed = ts.parseJsonConfigFileContent(
-    configFile.config,
+  const configPath = resolve(projectPath, tsconfigPath ?? "tsconfig.json");
+  const configText = ts.sys.readFile(configPath);
+  if (configText === undefined) throw new Error(`tsconfig not found or unreadable: ${configPath}`);
+  const parsed = ts.parseJsonSourceFileConfigFileContent(
+    ts.parseJsonText(configPath, configText),
     ts.sys,
-    dirname(configPath)
+    dirname(configPath),
+    undefined,
+    configPath
   );
+  const diagnostics = ts.getConfigFileParsingDiagnostics(parsed);
+  // TypeScript numbers syntax errors below 2000: they and every error outside compilerOptions break the file set
+  const fatal = diagnostics.filter((d) => d.code < 2000 || !isOptionError(d));
+  if (fatal.length > 0) {
+    throw new Error(`${configPath}: ${fatal.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")).join("; ")}`);
+  }
+  if (parsed.fileNames.length === 0) {
+    throw new Error(`${configPath} includes no files - point "tsconfig" at a config whose include covers the sources (references are not followed)`);
+  }
+  for (const d of diagnostics) {
+    const warning = `dlint: ${d.file?.fileName ?? configPath}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}\n`;
+    if (reportedWarnings.has(warning)) continue;
+    reportedWarnings.add(warning);
+    process.stderr.write(warning);
+  }
   const cacheDir = resolve(projectPath, "node_modules/.cache/dlint");
-  mkdirSync(cacheDir, { recursive: true });
   const incrementalOptions = {
     ...parsed.options,
     incremental: true,
@@ -40,6 +61,7 @@ export function createProgram(
     program: builder.getProgram(),
     saveBuildInfo: () => {
       try {
+        mkdirSync(cacheDir, { recursive: true });
         builder.emit(undefined, (fileName, text) => {
           if (fileName.endsWith(".tsbuildinfo")) ts.sys.writeFile(fileName, text);
         });
@@ -49,14 +71,18 @@ export function createProgram(
 }
 
 export function hasDirective(sourceFile: ts.SourceFile, directive: string): boolean {
-  const first = sourceFile.statements[0];
-  return !!first && ts.isExpressionStatement(first) && ts.isStringLiteral(first.expression) && first.expression.text === directive;
+  for (const s of sourceFile.statements) {
+    if (!ts.isExpressionStatement(s) || !ts.isStringLiteral(s.expression)) return false;
+    if (s.expression.text === directive) return true;
+  }
+  return false;
 }
 
 export interface ExportedFunction {
   name: ts.Identifier;
   node: ts.Node;
-  body: ts.Block | ts.ConciseBody | undefined;
+  func: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+  body: ts.ConciseBody | undefined;
   parameters: ts.NodeArray<ts.ParameterDeclaration>;
 }
 
@@ -64,43 +90,25 @@ export function getExportedFunctions(
   sf: ts.SourceFile,
   checker: ts.TypeChecker
 ): ExportedFunction[] {
+  const moduleSymbol = checker.getSymbolAtLocation(sf);
+  if (!moduleSymbol) return [];
+  const seen = new Set<ts.Node>();
   const fns: ExportedFunction[] = [];
-
-  ts.forEachChild(sf, (node) => {
-    // export function name() { ... }
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name &&
-      checker.getSymbolAtLocation(node.name) &&
-      ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export
-    ) {
-      fns.push({
-        name: node.name,
-        node,
-        body: node.body,
-        parameters: node.parameters,
-      });
-    }
-
-    // export const name = async (...) => { ... }
-    if (ts.isVariableStatement(node) && node.declarationList.declarations.length > 0) {
-      const firstDecl = node.declarationList.declarations[0];
-      if (firstDecl && ts.getCombinedModifierFlags(firstDecl) & ts.ModifierFlags.Export) {
-        for (const decl of node.declarationList.declarations) {
-          if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
-          const init = decl.initializer;
-          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-            fns.push({
-              name: decl.name,
-              node: decl,
-              body: init.body,
-              parameters: init.parameters,
-            });
-          }
-        }
+  // Every export form of this file (declarations, export lists, aliases) lands in the module's export table
+  for (const exp of checker.getExportsOfModule(moduleSymbol)) {
+    for (const decl of resolveSymbol(checker, exp).declarations ?? []) {
+      if (decl.getSourceFile() !== sf || seen.has(decl)) continue;
+      seen.add(decl);
+      if (ts.isFunctionDeclaration(decl) && decl.name) {
+        fns.push({ name: decl.name, node: decl, func: decl, body: decl.body, parameters: decl.parameters });
+      } else if (
+        ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.initializer &&
+        (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+      ) {
+        const func = decl.initializer;
+        fns.push({ name: decl.name, node: decl, func, body: func.body, parameters: func.parameters });
       }
     }
-  });
-
+  }
   return fns;
 }

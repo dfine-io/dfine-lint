@@ -2,46 +2,18 @@
 // Unnecessary "use server" exposes internal functions as public RPC endpoints.
 // Reverse-import index built once per Program (memoized) → O(N·fileSize) instead of O(S·N·fileSize).
 import ts from "typescript";
-import { defineRule, hasDirective } from "@dfine-io-gmbh/dlint";
+import { collectValueImports, defineRule, hasDirective, resolveImportedModule, resolveSymbol } from "@dfine-io-gmbh/dlint";
 
 type ReverseIndex = { importers: Map<string, string[]>; clientReach: Map<string, boolean> };
 const indexCache = new WeakMap<ts.Program, ReverseIndex>();
 
-function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
-  const clause = node.importClause;
-  if (!clause) return false;
-  if (clause.isTypeOnly) return true;
-  if (clause.name) return false;
-  const bindings = clause.namedBindings;
-  if (bindings && ts.isNamedImports(bindings)) return bindings.elements.every((el) => el.isTypeOnly);
-  return false;
-}
-
-// All value-import specifiers (static + dynamic import()) of a file.
-function collectImportSpecifiers(sf: ts.SourceFile): string[] {
-  const specifiers: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && !isTypeOnlyImport(node)) {
-      specifiers.push(node.moduleSpecifier.text);
-    }
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      const [arg] = node.arguments;
-      if (arg && ts.isStringLiteral(arg)) specifiers.push(arg.text);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return specifiers;
-}
-
 // Build "who imports file X" once per Program (reverse of the import graph).
 function buildReverseIndex(program: ts.Program): ReverseIndex {
   const importers = new Map<string, string[]>();
-  const opts = program.getCompilerOptions();
   for (const sf of program.getSourceFiles()) {
     if (sf.isDeclarationFile || program.isSourceFileFromExternalLibrary(sf)) continue;
-    for (const specifier of collectImportSpecifiers(sf)) {
-      const resolved = ts.resolveModuleName(specifier, sf.fileName, opts, ts.sys).resolvedModule?.resolvedFileName;
+    for (const literal of collectValueImports(program, sf)) {
+      const resolved = resolveImportedModule(program, literal)?.resolvedFileName;
       if (!resolved) continue;
       const list = importers.get(resolved) ?? [];
       list.push(sf.fileName);
@@ -87,10 +59,10 @@ export default defineRule({
     if (!hasDirective(ctx.sourceFile, "use server")) return;
     const modSym = ctx.checker.getSymbolAtLocation(ctx.sourceFile);
     if (!modSym) return;
-    const fnExports = ctx.checker
+    const hasFnExport = ctx.checker
       .getExportsOfModule(modSym)
-      .filter((e) => e.declarations?.some((d) => ts.isFunctionDeclaration(d) || ts.isVariableDeclaration(d)));
-    if (fnExports.length === 0) return;
+      .some((e) => resolveSymbol(ctx.checker, e).declarations?.some((d) => ts.isFunctionDeclaration(d) || ts.isVariableDeclaration(d)));
+    if (!hasFnExport) return;
 
     const index = getIndex(ctx.program);
     if (isClientReachable(ctx.program, index, ctx.sourceFile.fileName, new Set())) return;
@@ -104,11 +76,13 @@ export default defineRule({
       break;
     }
 
-    const firstStmt = ctx.sourceFile.statements[0];
-    if (!firstStmt) return;
+    const directive = ctx.sourceFile.statements.find(
+      (s) => ts.isExpressionStatement(s) && ts.isStringLiteral(s.expression) && s.expression.text === "use server",
+    );
+    if (!directive) return;
     if (rscImporter) {
       ctx.reportAt(
-        firstStmt,
+        directive,
         `Move "use server" import from RSC (${rscImporter}) to "use client" file -- no client caller in chain`,
         {
           action: "fix-import-chain",
@@ -117,7 +91,7 @@ export default defineRule({
       );
     } else {
       ctx.reportAt(
-        firstStmt,
+        directive,
         `Remove "use server" directive or move functions to utils -- no client callers found`,
         { action: "remove-directive", pattern: 'Remove "use server" or move functions to lib/utils/' },
       );

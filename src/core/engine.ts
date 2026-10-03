@@ -1,16 +1,7 @@
 import { join } from "node:path";
-import { existsSync, statSync } from "node:fs";
 import { createProgram } from "./program.js";
 import { buildReferenceIndex } from "./reference-index.js";
-import {
-  scanFiles,
-  scanChangedFiles,
-  scanCommitFiles,
-  scanBranchFiles,
-  setMaxFileSize,
-  loadIgnorePatterns,
-  collectFilesFromDir,
-} from "./scanner.js";
+import { collectFiles } from "./scanner.js";
 import type {
   CliOptions,
   LintResult,
@@ -19,6 +10,7 @@ import type {
   RuleDefinition,
   DlintConfig,
   RuleOverride,
+  LintTimings,
 } from "../types.js";
 import { resolveGroups } from "../config/groups.js";
 
@@ -29,45 +21,23 @@ export function lint(
 ): LintResult {
   const start = performance.now();
   const diagnostics: Diagnostic[] = [];
-
-  if (config.maxFileSize) setMaxFileSize(config.maxFileSize);
-
-  const extensions = (config.include ?? ["**/*.ts", "**/*.tsx"])
-    .map((p) => `.${p.split(".").pop() ?? "ts"}`)
-    .filter((e) => e.length > 1);
-  const ig = loadIgnorePatterns(opts.path);
-  if (config.exclude) for (const d of config.exclude) ig.add(d);
-  function isExcluded(f: string): boolean { return ig.ignores(f); }
-
-  let files: string[];
-  if (opts.files.length > 0) {
-    const expanded: string[] = [];
-    for (const f of opts.files) {
-      const absPath = join(opts.path, f);
-      if (!existsSync(absPath)) {
-        console.error(`Error: "${f}" not found.\nUsage: --files <file.ts|directory>\n  Examples:\n    --files src/components\n    --files src/components/button.tsx`);
-        process.exit(1);
-      }
-      if (statSync(absPath).isDirectory()) {
-        expanded.push(...collectFilesFromDir(absPath, extensions, opts.path, ig));
-      } else {
-        expanded.push(f);
-      }
-    }
-    files = expanded.filter((f) => !isExcluded(f));
-  } else if (opts.commit) {
-    files = scanCommitFiles(opts.path, extensions).filter((f) => !isExcluded(f));
-  } else if (opts.branch) {
-    files = scanBranchFiles(opts.path, extensions, config.baseBranch).filter((f) => !isExcluded(f));
-  } else if (opts.changed) {
-    files = scanChangedFiles(opts.path, extensions).filter((f) => !isExcluded(f));
-  } else {
-    files = scanFiles(opts.path, extensions, config.exclude);
-  }
+  const ruleMs = new Map<string, number>();
+  const files = collectFiles(opts, config);
+  const filesAt = performance.now();
 
   const { program, saveBuildInfo } = createProgram(opts.path, config.tsconfig);
   const checker = program.getTypeChecker();
+  const programAt = performance.now();
+  // The checker works lazily; under --benchmark it checks the files up front, so no rule carries that cost
+  if (opts.benchmark) {
+    for (const relPath of files) {
+      const sf = program.getSourceFile(join(opts.path, relPath));
+      if (sf) program.getSemanticDiagnostics(sf);
+    }
+  }
+  const typesAt = performance.now();
   const referenceIndex = buildReferenceIndex(program, checker);
+  const referencesAt = performance.now();
   const referencesDir = config.referencesDir ?? ".dlint/references";
 
   const rules =
@@ -109,10 +79,12 @@ export function lint(
     );
   }
 
+  let fileCount = 0;
   for (const relPath of files) {
     const absPath = join(opts.path, relPath);
     const sourceFile = program.getSourceFile(absPath);
     if (!sourceFile) continue;
+    fileCount++;
 
     for (const rule of rules) {
       if (isRuleDisabledForFile(rule.id, relPath)) continue;
@@ -128,25 +100,35 @@ export function lint(
         isSubCheckDisabled: (id: string) => disabledSubChecks.has(id),
         options: config.ruleOptions?.[rule.id] ?? {},
       } satisfies RuleContext;
+      const ruleStart = performance.now();
       rule.check(context);
+      ruleMs.set(rule.id, (ruleMs.get(rule.id) ?? 0) + performance.now() - ruleStart);
     }
 
   }
+  const rulesAt = performance.now();
 
   // Persist incremental build info for next run
   saveBuildInfo();
+  const endAt = performance.now();
+  const ms = (from: number, to: number): number => Math.round(to - from);
+  const timings = {
+    phases: { files: ms(start, filesAt), program: ms(filesAt, programAt), types: ms(programAt, typesAt), references: ms(typesAt, referencesAt), rules: ms(referencesAt, rulesAt), cache: ms(rulesAt, endAt) },
+    rules: [...ruleMs].map(([ruleId, total]) => ({ ruleId, ms: Math.round(total) })).sort((a, b) => b.ms - a.ms),
+  } satisfies LintTimings;
 
   const errorCount = diagnostics.filter((d) => d.severity === "error").length;
   const checkCount = rules.reduce((sum, r) => sum + (r.meta.subChecks ?? 1), 0);
   const fixableCount = diagnostics.filter((d) => !!d.advisory?.fix).length;
   return {
     diagnostics,
-    fileCount: files.length,
+    fileCount,
     ruleCount: rules.length,
     checkCount,
     errorCount,
     warningCount: diagnostics.length - errorCount,
-    durationMs: Math.round(performance.now() - start),
+    durationMs: ms(start, endAt),
     fixableCount,
+    ...(opts.benchmark ? { timings } : {}),
   };
 }

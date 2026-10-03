@@ -3,7 +3,7 @@
 // Skips: external declarations, empty-string sentinel checks, narrowing-guard patterns
 // where the operand feeds a narrower literal-union setter or return inside the guarded branch.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isNodeModulesDeclaration, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isNodeModulesDeclaration, isSameReference, resolveSymbol } from "@dfine-io-gmbh/dlint";
 
 function isPlainStringType(type: ts.Type): boolean {
   if (!(type.flags & ts.TypeFlags.String)) return false;
@@ -80,13 +80,6 @@ function findEnclosingFunction(node: ts.Node): ts.FunctionLikeDeclaration | null
   return null;
 }
 
-function sameSymbol(a: ts.Expression, b: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (!ts.isIdentifier(a) || !ts.isIdentifier(b)) return false;
-  const symA = checker.getSymbolAtLocation(a);
-  const symB = checker.getSymbolAtLocation(b);
-  return Boolean(symA && symB && symA === symB);
-}
-
 function feedsNarrowerConsumer(body: ts.Node, operand: ts.Expression, checker: ts.TypeChecker): boolean {
   let narrows = false;
   function scan(n: ts.Node): void {
@@ -94,7 +87,7 @@ function feedsNarrowerConsumer(body: ts.Node, operand: ts.Expression, checker: t
     if (ts.isCallExpression(n)) {
       for (let i = 0; i < n.arguments.length; i++) {
         const arg = n.arguments[i];
-        if (!arg || !sameSymbol(arg, operand, checker)) continue;
+        if (!arg || !isSameReference(arg, operand, checker)) continue;
         const sig = checker.getResolvedSignature(n);
         if (!sig) continue;
         const param = sig.getParameters()[i];
@@ -106,7 +99,7 @@ function feedsNarrowerConsumer(body: ts.Node, operand: ts.Expression, checker: t
         }
       }
     }
-    if (ts.isReturnStatement(n) && n.expression && sameSymbol(n.expression, operand, checker)) {
+    if (ts.isReturnStatement(n) && n.expression && isSameReference(n.expression, operand, checker)) {
       const fn = findEnclosingFunction(n);
       if (fn) {
         const sig = checker.getSignatureFromDeclaration(fn);

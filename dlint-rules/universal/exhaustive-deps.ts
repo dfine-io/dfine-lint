@@ -7,6 +7,7 @@ import {
   isFromPackage,
   resolveSymbol,
   unwrapPromiseType,
+  valueSymbolOf,
 } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
@@ -192,14 +193,7 @@ function isSkippableIdentifier(node: ts.Identifier): boolean {
   if (ts.isImportSpecifier(parent)) return true;
   // Property assignment name: { key: value } → skip key
   if (ts.isPropertyAssignment(parent) && parent.name === node) return true;
-  // Shorthand property: { key } in object literal position
-  if (
-    ts.isShorthandPropertyAssignment(parent) &&
-    parent.name === node &&
-    ts.isObjectLiteralExpression(parent.parent)
-  ) {
-    return false; // shorthand reads the variable — NOT skippable
-  }
+  // A shorthand { key } reads the variable, so it is never skipped
   return false;
 }
 
@@ -219,7 +213,7 @@ function collectCallbackDeps(
         return;
       }
 
-      const sym = checker.getSymbolAtLocation(n);
+      const sym = valueSymbolOf(n, checker);
       if (!sym) {
         ts.forEachChild(n, visit);
         return;
@@ -333,13 +327,6 @@ export default defineRule({
 
       const missing = [...actualDeps].filter((d) => !declaredDeps.has(d));
       if (missing.length > 0) {
-        /* Insert the missing roots into the existing array literal (append after the last
-           element, or between the brackets when empty) -- formatting of existing deps is kept. */
-        const lastEl = depsArg.elements[depsArg.elements.length - 1];
-        const insertText = missing.join(", ");
-        const fix = lastEl
-          ? ctx.insertAfter(lastEl, `, ${insertText}`)
-          : { start: depsArg.getStart(ctx.sourceFile) + 1, length: 0, newText: insertText };
         ctx.reportAt(
           depsArg,
           `Add missing deps to ${hookName}: ${missing.join(", ")}`,
@@ -347,7 +334,6 @@ export default defineRule({
             action: "add-missing-deps",
             pattern: `Add [${missing.join(", ")}] to the dependency array`,
             reference: "https://react.dev/reference/react/useEffect",
-            fix,
           },
         );
       }

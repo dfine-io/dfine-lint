@@ -3,7 +3,7 @@
 // e.g. arr.length >= 0 (always true), set.size < 0 (always false), s.length > -1 (always true).
 // TypeChecker-guarded to a real builtin collection / string, so the finding is always a real bug.
 import ts from "typescript";
-import { defineRule, isBuiltinCollection } from "@dfine-io-gmbh/dlint";
+import { defineRule, isBuiltinCollection, isStringType } from "@dfine-io-gmbh/dlint";
 
 const COMPARISONS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.GreaterThanToken,
@@ -66,10 +66,9 @@ export default defineRule({
 
       // Guard: receiver must be a real collection/string so length/size is truly non-negative.
       const recvType = ctx.checker.getTypeAtLocation(node.left.expression);
-      const isStringLike = !!(recvType.flags & ts.TypeFlags.StringLike);
       const isCollection = isBuiltinCollection(recvType, ctx.checker);
       const guardOk =
-        (prop === "length" && (isCollection || isStringLike)) || (prop === "size" && isCollection);
+        (prop === "length" && (isCollection || isStringType(recvType))) || (prop === "size" && isCollection);
       if (!guardOk) return;
 
       ctx.reportAt(node, `Comparison is ${verdict} -- .${prop} is never negative`, {

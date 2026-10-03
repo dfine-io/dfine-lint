@@ -95,6 +95,14 @@ export interface LintResult {
   fixableCount: number;
   /** Rule files that failed to load and were skipped; the run continues without them. */
   skippedRules?: SkippedRule[];
+  /** Present with --benchmark: duration per phase and per rule */
+  timings?: LintTimings;
+}
+
+/** Run time per phase and per rule, slowest rule first; `types` is the checker work --benchmark does up front */
+export interface LintTimings {
+  phases: { files: number; program: number; types: number; references: number; rules: number; cache: number };
+  rules: { ruleId: string; ms: number }[];
 }
 
 export interface SkippedRule {

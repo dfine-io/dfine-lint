@@ -1,8 +1,8 @@
 # dlint config & shipping (rule packs / plugins)
 
-A project consumes dlint through `dlint.config.ts`. The bundled universal rules load
-automatically; a project adds its own rules via `rulesDir`. Tuning happens via `groups`,
-`ruleOptions`, and `overrides` - never by copying a universal rule.
+A project configures dlint through `dlint.config.ts`; without one the bundled defaults run. The
+bundled universal rules load automatically; a project adds its own rules via `rulesDir`. Tuning
+happens via `groups`, `ruleOptions`, and `overrides` - never by copying a universal rule.
 
 ## DlintConfig
 
@@ -109,7 +109,8 @@ editing rule source.
 - `--rules <id...>` - run only specific rules. (Note: a rule resolved `off` by a group won't
   load; enable its group or set a severity override to run it explicitly.)
 - `--config <file>` - load this config; `rulesDir`/`tsconfig`/scan base resolve relative to it.
-- `--format json|table|compact|html`, `--fix` (+ `--dry-run`), `--no-error`.
+- `--format json|table|compact|html`, `--no-error`.
+- `--fix` (+ `--dry-run`) - applies only behavior-keeping fixes, then lints again; the summary goes to stderr.
 - `--list-rules` - the loaded rule set as JSON (id + description); no linting, no tsconfig needed.
 
 ## Type-checking a rule pack

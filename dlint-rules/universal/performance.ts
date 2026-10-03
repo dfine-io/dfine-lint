@@ -2,7 +2,7 @@
 // unbounded .map()/.filter() chains, and expensive operations in hot paths.
 // These patterns cause O(n^2) or worse degradation at scale.
 import ts from "typescript";
-import { defineRule, isBuiltinCollection, isInsideLoop, isLibDeclaration, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isBuiltinCollection, isInsideLoop, isLibDeclaration, isNodeModulesDeclaration, isTypeOnlyImport, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -106,12 +106,12 @@ export default defineRule({
 
       // no-barrel-import: import resolves to index file (TypeChecker-verified)
       if (
-        !offBarrel && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+        !offBarrel && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) &&
+        !isTypeOnlyImport(node, ctx.program.getCompilerOptions())
       ) {
         const spec = node.moduleSpecifier.text;
         if (!spec.startsWith(".")) return;
-        const resolved = ts.resolveModuleName(spec, ctx.sourceFile.fileName, ctx.program.getCompilerOptions(), ts.sys);
-        const resolvedPath = resolved.resolvedModule?.resolvedFileName;
+        const resolvedPath = resolveImportedModule(ctx.program, node.moduleSpecifier)?.resolvedFileName;
         if (resolvedPath && /[/\\]index\.[tj]sx?$/.test(resolvedPath)) {
           ctx.reportAt(node, "Barrel import — import directly from source file for tree-shaking", { action: "direct-import", pattern: "import { x } from './module' instead of './index'" });
         }

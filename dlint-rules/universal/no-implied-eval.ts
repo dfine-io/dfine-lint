@@ -2,7 +2,7 @@
 // and the new Function() / Function() constructor which compile strings at runtime.
 // Verifies callee is the global lib declaration via TypeChecker symbol resolution.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isStringType } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -35,12 +35,7 @@ export default defineRule({
         const codeArg = node.arguments[0];
         if (!codeArg) return;
         const type = ctx.checker.getTypeAtLocation(codeArg);
-        if (
-          type.flags &
-          (ts.TypeFlags.String |
-            ts.TypeFlags.StringLiteral |
-            ts.TypeFlags.TemplateLiteral)
-        ) {
+        if (isStringType(type)) {
           ctx.reportAt(
             codeArg,
             `${node.expression.text}() runs a string as code — pass a function or remove dynamic evaluation`,

@@ -2,7 +2,16 @@
 // lone blocks, multiline string continuations, octal escapes, delete on variables,
 // and global variable reassignment.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
+
+// delete (x) deletes x: parentheses never change what an expression is
+function unparenthesized(node: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(node) ? unparenthesized(node.expression) : node;
+}
+
+function outermostParenthesized(node: ts.Node): ts.Node {
+  return ts.isParenthesizedExpression(node.parent) ? outermostParenthesized(node.parent) : node;
+}
 
 export default defineRule({
   meta: {
@@ -59,19 +68,18 @@ export default defineRule({
         }
       }
 
-      // no-delete-var — delete on variable identifier
-      if (ts.isDeleteExpression(node) && ts.isIdentifier(node.expression)) {
+      // no-delete-var — delete on variable identifier, parenthesized or not
+      if (ts.isDeleteExpression(node) && ts.isIdentifier(unparenthesized(node.expression))) {
         ctx.reportAt(node, "Do not use delete on variables — only on object properties", {
           action: "remove-delete", pattern: "Set the variable to undefined instead of deleting it",
         });
       }
 
-      // no-global-assign — assignment to global variable
-      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ts.isIdentifier(node.left)) {
-        const sym = ctx.checker.getSymbolAtLocation(node.left);
+      // no-global-assign — any write to a global variable (=, +=, ++, destructuring); delete is no-delete-var's
+      if (ts.isIdentifier(node) && !ts.isDeleteExpression(outermostParenthesized(node).parent) && isWriteTarget(node)) {
+        const sym = valueSymbolOf(node, ctx.checker);
         if (sym && isLibDeclaration(sym)) {
-          ctx.reportAt(node, `Do not reassign global '${node.left.text}'`, {
+          ctx.reportAt(node, `Do not reassign global '${node.text}'`, {
             action: "no-global-reassign", pattern: "Use a local variable instead of reassigning globals",
           });
         }

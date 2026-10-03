@@ -17,6 +17,25 @@ export function d() {
   return 0;
 }
 
+// POSITIVE: double-negation inside an && chain of a condition
+export function e(flag: boolean) {
+  if (!!n && flag) return 1; // EXPECT: no-implicit-coercion
+  return 0;
+}
+
+// POSITIVE: double-negation as a for condition
+export function f() {
+  for (; !!n; ) break; // EXPECT: no-implicit-coercion
+}
+
+// NEGATIVE: "" + x where x is already a string (a literal union)
+declare const mode: "a" | "b";
+export const n4 = "" + mode;
+declare const loud: Uppercase<string>;
+export const n5 = "" + loud;
+declare const tagged: `id-${string}`;
+export const n6 = "" + tagged;
+
 // NEGATIVE: strict equality
 export const n1 = (n === 1);
 

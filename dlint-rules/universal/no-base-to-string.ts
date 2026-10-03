@@ -2,7 +2,7 @@
 // Flags explicit .toString() and implicit + coercion on types without own toString().
 // Catches silent data corruption in string interpolation and concatenation contexts.
 import ts from "typescript";
-import { defineRule, hasOwnToString } from "@dfine-io-gmbh/dlint";
+import { defineRule, hasOwnToString, isStringType } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -21,7 +21,6 @@ export default defineRule({
           node.expression.expression
         );
         if (!hasOwnToString(objType, ctx.checker)) {
-          const objText = node.expression.expression.getText(ctx.sourceFile);
           ctx.reportAt(
             node.expression.expression,
             `Add own toString() to '${ctx.checker.typeToString(objType)}' -- falls back to [object Object]`,
@@ -29,7 +28,6 @@ export default defineRule({
               action: "add-to-string",
               pattern: "Implement toString() or use JSON.stringify()",
               reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/toString",
-              fix: ctx.createFix(node, "JSON.stringify(" + objText + ")"),
             }
           );
         }
@@ -40,10 +38,8 @@ export default defineRule({
       ) {
         const lt = ctx.checker.getTypeAtLocation(node.left);
         const rt = ctx.checker.getTypeAtLocation(node.right);
-        const lStr =
-          lt.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral);
-        const rStr =
-          rt.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral);
+        const lStr = isStringType(lt);
+        const rStr = isStringType(rt);
         if (lStr && !hasOwnToString(rt, ctx.checker)) {
           ctx.reportAt(
             node.right,
@@ -52,7 +48,6 @@ export default defineRule({
               action: "add-to-string",
               pattern: "Implement toString() or use JSON.stringify()",
               reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/toString",
-              fix: ctx.createFix(node.right, "JSON.stringify(" + node.right.getText(ctx.sourceFile) + ")"),
             }
           );
         } else if (rStr && !hasOwnToString(lt, ctx.checker)) {
@@ -63,7 +58,6 @@ export default defineRule({
               action: "add-to-string",
               pattern: "Implement toString() or use JSON.stringify()",
               reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/toString",
-              fix: ctx.createFix(node.left, "JSON.stringify(" + node.left.getText(ctx.sourceFile) + ")"),
             }
           );
         }

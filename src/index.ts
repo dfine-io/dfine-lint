@@ -24,6 +24,7 @@ export type {
   TypeDeclarationMember,
   TypeDeclaration,
   ReferenceIndex,
+  LintTimings,
 } from "./types.js";
 export {
   hasDirective,
@@ -40,13 +41,19 @@ export {
   isInsideLoop,
   isNullableType,
   hasOwnToString,
+  isStringType,
   resolveSymbol,
   hasJsDocTag,
   isAssignableTo,
   unwrapPromiseType,
   isBuiltinCollection,
+  isThenable,
+  isWriteTarget,
+  valueSymbolOf,
+  isSameReference,
 } from "./helpers/ast.js";
 export {
+  dbRootMethod,
   isDbCall,
   returnTypeHasProperties,
   isFromPackage,
@@ -54,6 +61,9 @@ export {
 export {
   resolveCallBody,
   bodyContainsCall,
+  resolveImportedModule,
+  isTypeOnlyImport,
+  collectValueImports,
 } from "./helpers/cross-file.js";
 export { tokenizeFile, tokenSimilarity } from "./clone/index.js";
 export type { TokenizedBlock } from "./clone/index.js";

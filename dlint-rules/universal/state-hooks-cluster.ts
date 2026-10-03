@@ -8,6 +8,7 @@ import {
   isFromPackage,
   isLibDeclaration,
   isNullableType,
+  isWriteTarget,
 } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
@@ -182,14 +183,12 @@ function wroteRefCurrentInBody(
     )
       return;
     if (
-      ts.isBinaryExpression(n) &&
-      n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      ts.isPropertyAccessExpression(n.left) &&
-      n.left.name.text === "current" &&
-      ts.isIdentifier(n.left.expression)
+      ts.isPropertyAccessExpression(n) &&
+      n.name.text === "current" &&
+      ts.isIdentifier(n.expression) &&
+      isWriteTarget(n)
     ) {
-      const sym = checker.getSymbolAtLocation(n.left.expression);
+      const sym = checker.getSymbolAtLocation(n.expression);
       if (sym && refs.has(sym)) {
         found = true;
         return;

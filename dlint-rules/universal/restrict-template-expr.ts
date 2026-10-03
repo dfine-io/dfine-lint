@@ -2,20 +2,7 @@
 // Only allows primitives and types with own toString() implementation.
 // Prevents [object Object] interpolation in user-facing strings and logs.
 import ts from "typescript";
-import { defineRule, hasOwnToString, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
-
-const SAFE_FLAGS =
-  ts.TypeFlags.String |
-  ts.TypeFlags.StringLiteral |
-  ts.TypeFlags.Number |
-  ts.TypeFlags.NumberLiteral |
-  ts.TypeFlags.Boolean |
-  ts.TypeFlags.BooleanLiteral |
-  ts.TypeFlags.BigInt |
-  ts.TypeFlags.BigIntLiteral |
-  ts.TypeFlags.Null |
-  ts.TypeFlags.Undefined |
-  ts.TypeFlags.TemplateLiteral;
+import { defineRule, hasOwnToString, isStringType } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -23,36 +10,24 @@ export default defineRule({
     description: "Unsafe types in template literal expressions",
   },
   check(ctx) {
-    function isSafeForTemplate(type: ts.Type): boolean {
-      if (type.flags & SAFE_FLAGS) return true;
-      if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
-      if (type.flags & ts.TypeFlags.EnumLiteral) return true;
-      if (type.isUnion()) return type.types.every((t) => isSafeForTemplate(t));
-      if (type.isIntersection())
-        return type.types.some((t) => isSafeForTemplate(t));
-      if (hasOwnToString(type, ctx.checker)) return true;
-      if (isThirdPartyType(type)) return true;
-      return false;
-    }
-
-    function isThirdPartyType(type: ts.Type): boolean {
-      const sym = type.symbol ?? type.aliasSymbol;
-      return !!sym && isNodeModulesDeclaration(sym);
-    }
-
     ctx.walk((node) => {
       if (!ts.isTemplateExpression(node)) return;
+      // A tag gets the values themselves (sql`...` builds a query); only a tag returning a string, like String.raw, stringifies them
+      if (ts.isTaggedTemplateExpression(node.parent)) {
+        const returned = ctx.checker.getResolvedSignature(node.parent)?.getReturnType();
+        if (!returned || !isStringType(returned)) return;
+      }
       for (const span of node.templateSpans) {
         const type = ctx.checker.getTypeAtLocation(span.expression);
-        if (!isSafeForTemplate(type)) {
+        // Same answer as no-base-to-string: a package type without its own toString() prints [object Object] too
+        if (!hasOwnToString(type, ctx.checker)) {
           ctx.reportAt(
             span.expression,
-            `Wrap '${ctx.checker.typeToString(type)}' with String() or .toString() in template literal`,
+            `Format '${ctx.checker.typeToString(type)}' explicitly in template literal: it has no own toString()`,
             {
               action: "stringify",
-              pattern: "Wrap the expression with String()",
+              pattern: "Interpolate a field, or give the type its own toString()",
               reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals",
-              fix: ctx.createFix(span.expression, "String(" + span.expression.getText(ctx.sourceFile) + ")"),
             }
           );
         }

@@ -9,7 +9,8 @@ import {
 } from "@dfine-io-gmbh/dlint";
 
 function isBooleanType(type: ts.Type, checker: ts.TypeChecker): boolean {
-  const clean = checker.getNonNullableType(type);
+  // A type parameter carries its boolean-ness in its constraint; NonNullable<T> would hide it
+  const clean = checker.getNonNullableType(checker.getBaseConstraintOfType(type) ?? type);
   if (clean.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return true;
   if (clean.isUnion()) return clean.types.every(
     (t) => t.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral));
@@ -40,7 +41,6 @@ export default defineRule({
             action: "use-nullish-coalescing",
             pattern: "value ?? fallback instead of value || fallback",
             reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing",
-            fix: ctx.createFix(node.operatorToken, "??"),
           }
         );
       }

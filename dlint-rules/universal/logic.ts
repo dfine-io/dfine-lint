@@ -2,27 +2,20 @@
 // redundant boolean expressions, and unnecessary conditional branches.
 // Logic errors compile and run but produce wrong results silently.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
 
 function symbolsMatch(a: ts.Node, b: ts.Node, checker: ts.TypeChecker): boolean {
-  if (ts.isElementAccessExpression(a) && ts.isElementAccessExpression(b)) {
-    return (
-      symbolsMatch(a.expression, b.expression, checker) &&
-      symbolsMatch(a.argumentExpression, b.argumentExpression, checker)
-    );
-  }
-  const symA =
-    ts.isIdentifier(a) || ts.isPropertyAccessExpression(a)
-      ? checker.getSymbolAtLocation(a)
-      : undefined;
-  const symB =
-    ts.isIdentifier(b) || ts.isPropertyAccessExpression(b)
-      ? checker.getSymbolAtLocation(b)
-      : undefined;
-  if (symA && symB) return symA === symB;
+  // a.ok and b.ok share the property symbol: the SDK matches the receivers (element access included) too
+  if (ts.isExpression(a) && ts.isExpression(b) && isSameReference(a, b, checker)) return true;
   if (ts.isNumericLiteral(a) && ts.isNumericLiteral(b)) return a.text === b.text;
   if (ts.isStringLiteral(a) && ts.isStringLiteral(b)) return a.text === b.text;
   return false;
+}
+
+// An overwrite that reads the old value keeps it alive: x = f(x), a[0] = a.at(0) * 2, x = wrap({ x })
+function readsReference(node: ts.Node, target: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (ts.isExpression(node) && isSameReference(node, target, checker)) return true;
+  return ts.forEachChild(node, (child) => readsReference(child, target, checker) || undefined) ?? false;
 }
 
 function isElementAssignment(
@@ -67,6 +60,8 @@ export default defineRule({
           if (!prev || !curr) continue;
           if (!isElementAssignment(prev) || !isElementAssignment(curr)) continue;
           if (!symbolsMatch(prev.expression.left, curr.expression.left, checker)) continue;
+          // a[0] = a.reduce(...) reads the array, and with it the element
+          if (readsReference(curr.expression.right, prev.expression.left.expression, checker)) continue;
           ctx.reportAt(prev, "Remove dead write -- element is immediately overwritten", {
             action: "remove-dead-write",
             pattern: "Remove the dead write - the element is immediately overwritten",
@@ -118,23 +113,14 @@ export default defineRule({
           if (!ts.isBinaryExpression(next.expression)) continue;
           if (next.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
           if (!ts.isIdentifier(next.expression.left)) continue;
-          const declSym = checker.getSymbolAtLocation(decl.name);
-          const assignSym = checker.getSymbolAtLocation(next.expression.left);
-          if (declSym && declSym === assignSym) {
-            // Pipeline: x = f(x) — right side uses the declared variable as input, not dead init
-            let rhsUsesDecl = false;
-            function scanRhs(n: ts.Node): void {
-              if (rhsUsesDecl) return;
-              if (ts.isIdentifier(n) && checker.getSymbolAtLocation(n) === declSym) { rhsUsesDecl = true; return; }
-              ts.forEachChild(n, scanRhs);
-            }
-            scanRhs(next.expression.right);
-            if (!rhsUsesDecl) {
-              ctx.reportAt(curr, "Remove dead initial value -- variable is immediately reassigned", {
-                action: "remove-initial-value",
-                pattern: "Remove the dead initial value - the variable is immediately reassigned",
-              });
-            }
+          if (
+            isSameReference(decl.name, next.expression.left, checker) &&
+            !readsReference(next.expression.right, decl.name, checker)
+          ) {
+            ctx.reportAt(curr, "Remove dead initial value -- variable is immediately reassigned", {
+              action: "remove-initial-value",
+              pattern: "Remove the dead initial value - the variable is immediately reassigned",
+            });
           }
         }
       }

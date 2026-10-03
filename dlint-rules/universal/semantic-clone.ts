@@ -108,9 +108,9 @@ function buildSemanticMap(
       if (!a || !b) continue;
       if (a.file === b.file) continue;
       if (areDifferentRoutes(a.file, b.file, minRouteDistance)) continue;
-      if (!signaturesMatch(a, b, checker)) continue;
       const lenRatio = Math.min(a.tokens.length, b.tokens.length) / Math.max(a.tokens.length, b.tokens.length);
       if (lenRatio < minLengthRatio) continue;
+      if (!signaturesMatch(a, b, checker)) continue;
       const sim = tokenSimilarity(a.tokens, b.tokens);
       if (sim < minSemanticSimilarity || sim >= minSyntacticThreshold) continue;
       pairs.push({ aFile: a.file, aName: a.name, bFile: b.file, bName: b.name, similarity: sim });

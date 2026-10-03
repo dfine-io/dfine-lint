@@ -15,19 +15,10 @@ export default defineRule({
       if (ts.isPropertyAccessExpression(node) && node.name.text === "__proto__") {
         const protoSym = ctx.checker.getSymbolAtLocation(node.name);
         if (!protoSym || isLibDeclaration(protoSym)) {
-          // Auto-fix only a READ: `obj.__proto__` -> `Object.getPrototypeOf(obj)`. A write target
-          // (`obj.__proto__ = x`) must NOT become `Object.getPrototypeOf(obj) = x` (invalid).
-          const isWriteTarget =
-            ts.isBinaryExpression(node.parent) &&
-            node.parent.left === node &&
-            node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
           ctx.reportAt(node, "Use Object.getPrototypeOf() instead of __proto__", {
             action: "use-getPrototypeOf",
-            pattern: "Replace __proto__ read with Object.getPrototypeOf(obj)",
+            pattern: "Object.getPrototypeOf(obj) to read, Object.setPrototypeOf(obj, proto) to write",
             reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/getPrototypeOf",
-            ...(isWriteTarget
-              ? {}
-              : { fix: ctx.createFix(node, `Object.getPrototypeOf(${node.expression.getText(ctx.sourceFile)})`) }),
           });
         }
       }

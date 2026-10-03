@@ -19,3 +19,12 @@ export const sh = { a: a }; // EXPECT: no-useless-code
 // NEGATIVE: static key, real concat, shorthand already
 export const okKey = { key: 1 };
 export const okShort = { a };
+// NEGATIVE: .call with another thisArg changes this
+export function callOther(other: { fn(x: number): void }) {
+  o.fn.call(other, 1);
+}
+// NEGATIVE: the computed key defines a plain member where the static one would not
+export const ownProto = { ["__proto__"]: 1 };
+export class Ctor {
+  ["constructor"]() {}
+}

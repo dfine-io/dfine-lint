@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "types": [], "someFutureOption": true }, "include": ["src/**/*.ts"] }

@@ -2,9 +2,9 @@
 // the expression redundant or always-constant (a && a, x - x, n > n, p | p).
 // Excludes + and * (doubling/squaring are legitimate) and equality operators (self-compare is
 // handled by `correctness`). Operands with side effects (calls, getters) are never flagged, so
-// the finding is always a real bug. Self-contained: inlines its own purity + same-ref checks.
+// the finding is always a real bug. Purity is checked here; the same-reference test is the SDK's.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
 
 const REDUNDANT_OPS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.AmpersandAmpersandToken,
@@ -55,16 +55,8 @@ export default defineRule({
       const a = ts.isParenthesizedExpression(x) ? x.expression : x;
       const b = ts.isParenthesizedExpression(y) ? y.expression : y;
       if (a.kind !== b.kind) return false;
-      if (ts.isIdentifier(a) && ts.isIdentifier(b)) {
-        const sa = checker.getSymbolAtLocation(a);
-        const sb = checker.getSymbolAtLocation(b);
-        return !!sa && sa === sb;
-      }
-      if (a.kind === ts.SyntaxKind.ThisKeyword) return true;
-      if (ts.isPropertyAccessExpression(a) && ts.isPropertyAccessExpression(b))
-        return a.name.text === b.name.text && sameRef(a.expression, b.expression);
-      if (ts.isElementAccessExpression(a) && ts.isElementAccessExpression(b))
-        return sameRef(a.expression, b.expression) && sameRef(a.argumentExpression, b.argumentExpression);
+      // Identifiers, property chains, element access and this through the SDK; bare literals below
+      if (ts.isExpression(a) && ts.isExpression(b) && isSameReference(a, b, checker)) return true;
       if (ts.isNumericLiteral(a) && ts.isNumericLiteral(b)) return a.text === b.text;
       if (ts.isStringLiteral(a) && ts.isStringLiteral(b)) return a.text === b.text;
       return false;

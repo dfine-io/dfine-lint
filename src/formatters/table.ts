@@ -6,7 +6,7 @@ const YELLOW = "\x1b[33m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-export function formatTable(result: LintResult, opts: CliOptions): string {
+export function formatTable(result: LintResult, _: CliOptions): string {
   const lines: string[] = [];
   lines.push(
     `\ndlint — ${result.fileCount} files, ${result.ruleCount} rules (${result.checkCount} checks), ${result.durationMs}ms\n`
@@ -29,7 +29,5 @@ export function formatTable(result: LintResult, opts: CliOptions): string {
   for (const s of result.skippedRules ?? []) {
     lines.push(`${YELLOW}⚠${RESET} skipped rule ${s.file}: ${s.reason}`);
   }
-  if (opts.benchmark)
-    lines.push(`${DIM}Duration: ${result.durationMs}ms${RESET}\n`);
   return lines.join("\n");
 }

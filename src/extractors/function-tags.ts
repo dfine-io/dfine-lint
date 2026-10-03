@@ -46,7 +46,7 @@ export default defineExtractor<FunctionTag>({
     const results: FunctionTag[] = [];
     for (const fn of allExports) {
       if (!fn.body || !ts.isBlock(fn.body)) continue;
-      const sig = ctx.checker.getSignatureFromDeclaration(fn.node as ts.SignatureDeclaration);
+      const sig = ctx.checker.getSignatureFromDeclaration(fn.func);
       const returnType = sig
         ? ctx.checker.typeToString(unwrapPromiseType(ctx.checker.getReturnTypeOfSignature(sig), ctx.checker))
         : "unknown";

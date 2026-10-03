@@ -50,10 +50,11 @@ export default {
     // dlint's own file/rule discovery walks directories (readdirSync) by design — the path is
     // dlint's configured scan root, not external runtime input, so this is not the traversal sink
     // the rule targets. (scanner.ts shells out via execFile, not exec, so no-child-process is clean.)
+    // fixer.ts resolves that same root with realpathSync to keep --fix writes inside it.
     {
       ruleId: "no-non-literal-fs-path",
       severity: "off",
-      files: ["scanner.ts", "loader.ts"],
+      files: ["scanner.ts", "loader.ts", "fixer.ts"],
     },
   ],
 } satisfies DlintConfig;

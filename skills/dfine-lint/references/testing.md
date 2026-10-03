@@ -61,18 +61,45 @@ sometimes a `dlint.config.ts`, run from that directory:
   `maxLines: 5` is set).
 - `tests/nodup-island/` + `nodup-island.dlint.config.ts` - proves `no-duplicate-schema-export`'s
   `ignorePaths` option silences a mirrored copy while a real duplicate still fires.
-- `tests/cli-error-island/` - a malformed `tsconfig.json`; asserts a runtime failure surfaces as a
-  friendly `dlint:` message with a non-zero exit and no Node stack trace.
+- `tests/cli-error-island/` - broken tsconfigs, picked per case via `DLINT_GUARD_TSCONFIG`: invalid
+  JSON, a broken base, no files, a missing or unreadable file all exit 2 with a friendly `dlint:`
+  message; an unknown compiler option only warns. Also covers `--rules` for a disabled rule and a
+  missing `--config` or `--files` entry (exit 2).
 - `tests/ts7-consumer-island/` + `ts7-consumer-island.dlint.config.ts` - a TS7-style stub
   `typescript` (no in-process JS API) staged into `node_modules`; proves a consumer rule importing
   bare `typescript` still resolves dlint's own bundled engine.
 - `tests/list-rules-island/` + `list-rules-length` / `list-rules-nodesc` configs - drive the
   failure branches of `--list-rules`: an over-long description must be reported, and a rule with no
   description must be skipped and named while the run still exits 0.
+- `tests/sdk-contract-island/` + `sdk-contract-island.dlint.config.ts` - a probe rule pins SDK helpers
+  no bundled rule exercises (`isInConditionalBranch`, `isLibDeclaration`, `isFromPackage`, and
+  `valueSymbolOf` on a shorthand default value), plus an `--extract` run over an exported arrow
+  function.
+- `tests/fix-island/` - `--fix` on copies of the input files (`--files`, no git). Without a config:
+  each fixed copy must match its `.expected.ts`, a byte order mark stays in place, a symlink out of
+  the copy is never written, stdout stays valid JSON with per-rule `timings` under `--benchmark`,
+  the report is the re-lint after fixing, and `--format html` on the unfixed copy exits 1 with the
+  timing on stderr. Then the copy gets a config: the opinionated group fixes `merge.ts`
+  (duplicate imports, a bare self-import, constructors), and the consumer rule `fix-overlap-probe`
+  pins that a fix lands whole or not at all and that `insertBefore`/`insertAfter` keep the leading
+  trivia. Separate copies check that an ES2021 lib gets no `Object.hasOwn` suggestion and that
+  `verbatimModuleSyntax` keeps `import { type T }` and `export { type T } from` as cycle edges.
+- `fixtures/unused-export.dynamic.ts` (block `unused-export`) - an export reached only through
+  `import("./x", options)` must not be reported.
+- `tests/use-server-island/` + `use-server-island.dlint.config.ts` - a "use server" file reached
+  by a client file only through a barrel re-export must not be reported by `unnecessary-use-server`.
+- git modes (`tests/run.sh` block `git-guard`) run in temporary repositories: no repository, an
+  unknown base branch, a base with `..` or a leading `-` and a shallow `--commit` exit 2, each with
+  its own message; an unborn HEAD, a root commit, a subdirectory project and file names with
+  quotes or umlauts lint the expected files, `--branch` against a local base lints its diff, and
+  `maxFileSize` drops an oversized file from the full scan, `--changed`, `--commit` and `--branch`,
+  never from `--files`.
+- rule loading (block `rule-loading`): every bundled rule loads without a skipped rule, and a
+  consumer rule exported through `module.exports` (`sdk-contract-island/consumer-rules`) still loads.
 
-Pattern for a new mechanic test: add the island dir + a `.dlint.config.ts`, then add a small
-block to `tests/run.sh` (mirror the `config-resolve` / `options` blocks) that runs dlint with
-`--config` and compares findings to the island file's `EXPECT` markers.
+Pattern for a new mechanic test: add the island dir + a `.dlint.config.ts`, then call
+`island_check` in `tests/run.sh`; it runs dlint with `--config` and compares findings to the
+island file's `EXPECT` markers.
 
 ## What "done" looks like
 

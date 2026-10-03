@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { createJiti } from "jiti";
+import { BUNDLED_RULES_DIR } from "../core/constants.js";
 import type { DlintConfig, RuleDefinition, ExtractorDefinition, SkippedRule } from "../types.js";
 import { resolveGroups } from "./groups.js";
 
@@ -12,15 +12,18 @@ import { resolveGroups } from "./groups.js";
 // the whole run with it. Alias `typescript` to dlint's own bundled 6.x engine so EVERY jiti-loaded rule (bundled
 // AND consumer) resolves the JS-API compiler deterministically — this is the isolation the TS7 interim promises.
 const require = createRequire(import.meta.url);
-const jiti = createJiti(import.meta.url, {
-  interopDefault: true,
-  alias: { typescript: require.resolve("typescript") },
-});
+const alias = { typescript: require.resolve("typescript") };
+const jiti = createJiti(import.meta.url, { interopDefault: true, alias });
+// Bundled rules default-import only typescript, so they skip the interop proxy and its getter on every ts.* access
+const bundledJiti = createJiti(import.meta.url, { interopDefault: false, alias });
 
 export async function loadConfig(projectPath: string, configFile?: string): Promise<DlintConfig> {
   const configPath = configFile ? resolve(configFile) : join(projectPath, "dlint.config.ts");
   if (!existsSync(configPath)) {
-    throw new Error(`config not found: ${configPath}`);
+    // An explicit --config must exist; without one the bundled defaults apply
+    if (configFile) throw new Error(`config not found: ${configPath}`);
+    process.stderr.write(`dlint: no dlint.config.ts in ${projectPath}, running the bundled defaults\n`);
+    return {};
   }
   const mod = await jiti.import(configPath);
   return (mod as { default: DlintConfig }).default ?? (mod as DlintConfig);
@@ -43,7 +46,7 @@ function collectRuleFiles(dir: string): string[] {
 export async function loadRules(
   projectPath: string,
   config: DlintConfig
-): Promise<{ rules: RuleDefinition[]; skipped: SkippedRule[] }> {
+): Promise<{ rules: RuleDefinition[]; skipped: SkippedRule[]; disabled: string[] }> {
   const overrideMap = new Map<string, "error" | "warning" | "off">();
   for (const o of config.overrides ?? []) {
     if (o.files) continue; // File-scoped overrides handled in engine.ts
@@ -57,13 +60,10 @@ export async function loadRules(
   // Bundled universal rules ship with the package and load by default; project rules
   // (rulesDir) are additive and override a bundled rule with the same id.
   const dirs: string[] = [];
-  if (config.bundledRules !== false) {
-    const bundled = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dlint-rules", "universal");
-    if (existsSync(bundled)) dirs.push(bundled);
-  }
+  if (config.bundledRules !== false && existsSync(BUNDLED_RULES_DIR)) dirs.push(BUNDLED_RULES_DIR);
   if (config.rulesDir) {
     const projectDir = resolve(projectPath, config.rulesDir);
-    if (existsSync(projectDir)) dirs.push(projectDir);
+    if (existsSync(projectDir) && !dirs.includes(projectDir)) dirs.push(projectDir);
   }
   if (dirs.length === 0) {
     throw new Error("No rules found — enable bundledRules or set a valid rulesDir.");
@@ -73,11 +73,12 @@ export async function loadRules(
   // take down a whole run. Bundled rules ship validated, so in practice this only hits rulesDir.
   const byId = new Map<string, RuleDefinition>();
   const skipped: SkippedRule[] = [];
+  const loaded = new Set<string>();
   for (const dir of dirs) {
     for (const filePath of collectRuleFiles(dir)) {
       let rule: RuleDefinition | undefined;
       try {
-        const mod = await jiti.import(filePath);
+        const mod = await (dir === BUNDLED_RULES_DIR ? bundledJiti : jiti).import(filePath);
         rule = (mod as { default: RuleDefinition }).default;
       } catch (err) {
         const first = (err as Error).message.split("\n")[0];
@@ -94,6 +95,7 @@ export async function loadRules(
         continue;
       }
       rule.id = basename(filePath, ".ts");
+      loaded.add(rule.id);
       const baseName = filePath.replace(dir + "/", "").replace(/\.ts$/, "");
       const override = overrideMap.get(rule.id) ?? overrideMap.get(baseName);
       const resolved =
@@ -103,7 +105,7 @@ export async function loadRules(
       byId.set(rule.id, rule);
     }
   }
-  return { rules: [...byId.values()], skipped };
+  return { rules: [...byId.values()], skipped, disabled: [...loaded].filter((id) => !byId.has(id)) };
 }
 
 export async function loadExtractors(

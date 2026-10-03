@@ -1,8 +1,8 @@
-// Flags files that import themselves (circular self-reference).
-// Resolves import specifiers via ts.resolveModuleName to detect aliased self-imports.
+// Flags files that import or re-export themselves (circular self-reference).
+// Resolves import specifiers the way the program does to detect aliased self-imports.
 // Self-imports cause initialization bugs and indicate broken module structure.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -12,28 +12,16 @@ export default defineRule({
   check(ctx) {
     ts.forEachChild(ctx.sourceFile, (node) => {
       if (
-        ts.isImportDeclaration(node) &&
-        ts.isStringLiteral(node.moduleSpecifier)
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) &&
+        resolveImportedModule(ctx.program, node.moduleSpecifier)?.resolvedFileName === ctx.sourceFile.fileName
       ) {
-        const resolved = ts.resolveModuleName(
-          node.moduleSpecifier.text,
-          ctx.sourceFile.fileName,
-          ctx.program.getCompilerOptions(),
-          ts.sys
-        );
-        if (
-          resolved.resolvedModule?.resolvedFileName === ctx.sourceFile.fileName
-        ) {
-          ctx.reportAt(
-            node,
-            `File imports itself via '${node.moduleSpecifier.text}'`,
-            {
-              action: "remove-self-import",
-              pattern: "Delete the self-import, use local declarations directly",
-              fix: ctx.deleteNode(node),
-            }
-          );
-        }
+        ctx.reportAt(node, `File imports itself via '${node.moduleSpecifier.text}'`, {
+          action: "remove-self-import",
+          pattern: "Delete the self-import, use local declarations directly",
+          // Only a bare side-effect import binds no name, so only its removal cannot break a reference
+          ...(ts.isImportDeclaration(node) && !node.importClause ? { fix: ctx.deleteNode(node) } : {}),
+        });
       }
     });
   },

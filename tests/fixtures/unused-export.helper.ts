@@ -2,3 +2,4 @@
 import { usedThing } from "./unused-export.fixture";
 
 export const consumesUsed = usedThing;
+export const loadsLazily = import("./unused-export.dynamic", {});

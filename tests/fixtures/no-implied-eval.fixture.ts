@@ -13,6 +13,16 @@ export function t2() {
 // POSITIVE: new Function() constructor
 export const built = new Function("a", "return a"); // EXPECT: no-implied-eval
 
+// POSITIVE: setTimeout with a union of code strings
+declare const code: "a()" | "b()";
+export function tUnion() {
+  setTimeout(code, 100); // EXPECT: no-implied-eval
+}
+declare const upCode: Uppercase<string>;
+export function tMapped() {
+  setTimeout(upCode, 100); // EXPECT: no-implied-eval
+}
+
 // NEGATIVE: setTimeout with a function argument
 export function t3() {
   setTimeout(() => undefined, 100);

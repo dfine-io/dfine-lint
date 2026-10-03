@@ -38,10 +38,6 @@ export default defineRule({
           }
           return name;
         });
-        const lastClause = node.caseBlock.clauses[node.caseBlock.clauses.length - 1];
-        const defaultFix = lastClause
-          ? ctx.insertAfter(lastClause, "\n    default: throw new Error(\"Unhandled case\");")
-          : undefined;
         ctx.reportAt(
           node,
           `Add missing cases to switch: ${missingNames.join(", ")}`,
@@ -49,7 +45,6 @@ export default defineRule({
             action: "add-cases",
             pattern: `Add case clauses for ${missingNames.join(", ")} or add a default clause`,
             reference: "https://www.typescriptlang.org/docs/handbook/2/narrowing.html#exhaustiveness-checking",
-            fix: defaultFix,
           }
         );
       }

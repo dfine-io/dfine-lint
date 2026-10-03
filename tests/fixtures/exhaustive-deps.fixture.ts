@@ -1,12 +1,19 @@
 // exhaustive-deps — useEffect/useCallback/useMemo must list all reactive deps.
 import { useEffect, useState } from "react";
 
+declare function send(payload: { count: number }): void;
+
 export function Comp(initial: number) {
   const [count, setCount] = useState(initial);
 
   // POSITIVE: 'count' read in the effect but missing from deps
   useEffect(() => {
     void count;
+  }, []); // EXPECT: exhaustive-deps
+
+  // POSITIVE: 'count' read through a shorthand property, missing from deps
+  useEffect(() => {
+    send({ count });
   }, []); // EXPECT: exhaustive-deps
 
   // NEGATIVE: deps complete

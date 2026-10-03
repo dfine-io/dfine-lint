@@ -41,3 +41,31 @@ export function computeSmall(p: number, q: number) {
   const b7 = b6 * b2;
   return b7;
 }
+
+// Same identifiers and operators as accumulateWhile in the helper, but if instead of while: no clone.
+export function accumulateIf(x: number, y: number) {
+  let s = 0;
+  if (x > y) s = s + x;
+  if (x < y) s = s + y;
+  if (s > x) s = s - y;
+  if (s < y) s = s + x;
+  if (x > s) s = s * y;
+  if (y > s) s = s + y;
+  if (s > 0) s = s - x;
+  if (s < 0) s = s + y;
+  return s;
+}
+
+// Ten statements without any token, like pauseTenClone in the helper: no similarity, no clone.
+export function pauseTen() {
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+}

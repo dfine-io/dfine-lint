@@ -3,13 +3,17 @@ declare const arr: number[];
 declare const s: string;
 declare const m: Map<string, number>;
 declare const st: Set<number>;
+declare const rs: ReadonlySet<number>;
 declare const obj: { length: number };
 
 export const a1 = arr.length >= 0; // EXPECT: no-collection-size-mischeck
 export const a2 = arr.length < 0; // EXPECT: no-collection-size-mischeck
 export const a3 = s.length > -1; // EXPECT: no-collection-size-mischeck
 export const a4 = m.size < 0; // EXPECT: no-collection-size-mischeck
+declare const mode: "a" | "bb";
+export const aMode = mode.length >= 0; // EXPECT: no-collection-size-mischeck
 export const a5 = st.size >= 0; // EXPECT: no-collection-size-mischeck
+export const a6 = rs.size < 0; // EXPECT: no-collection-size-mischeck
 
 // NEGATIVE: meaningful comparisons, or a non-collection receiver
 export const ok1 = arr.length > 0;

@@ -18,3 +18,9 @@ export async function dynamic() {
 export async function staticSql() {
   await db.execute("SELECT 1");
 }
+
+// POSITIVE: dynamic SQL through a db handle held in a context object
+declare const ctx: { db: DbMock };
+export async function ctxDynamic() {
+  await ctx.db.execute("SELECT * FROM t WHERE id = " + userInput); // EXPECT: no-dynamic-sql
+}

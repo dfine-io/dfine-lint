@@ -38,3 +38,18 @@ export async function selectOk() {
 export async function insertVoid() {
   await db.insert(table).values({});
 }
+
+// POSITIVE: insert through a db handle held in a context object
+declare const ctx: { db: DbMock };
+export async function ctxInsertNoReturning() {
+  const row = await ctx.db.insert(table).values({}); // EXPECT: missing-returning
+  return row;
+}
+
+// NEGATIVE: a query builder returned by a call is no db handle, even with insert/update methods
+interface BuilderClient { from(name: string): DbMock }
+declare const client: BuilderClient;
+export async function builderInsert() {
+  const row = await client.from("t").insert(table).values({});
+  return row;
+}

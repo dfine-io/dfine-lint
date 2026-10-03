@@ -25,12 +25,22 @@ export const oct = "\101"; // EXPECT: banned-syntax
 export function del() {
   let dv = 1;
   delete dv; // EXPECT: banned-syntax
+  delete NaN; // EXPECT: banned-syntax
+  delete (NaN); // EXPECT: banned-syntax
+  delete ((NaN)); // EXPECT: banned-syntax
 }
 
 // POSITIVE: reassignment of a global (lib) binding
 export function glob() {
   NaN = 1; // EXPECT: banned-syntax
+  NaN += 1; // EXPECT: banned-syntax
+  NaN++; // EXPECT: banned-syntax
+  [NaN] = [1]; // EXPECT: banned-syntax
+  ({ NaN } = { NaN: 1 }); // EXPECT: banned-syntax
 }
+
+// NEGATIVE: reading a global is no write
+export const readNaN = NaN;
 
 // NEGATIVE: undefined used directly (no void)
 export const ok1 = undefined;

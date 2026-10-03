@@ -2,7 +2,7 @@
 // with non-nullable types, and unsafe type narrowing patterns.
 // Safety issues compile but can cause runtime null/undefined errors.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -119,11 +119,8 @@ export default defineRule({
         const sym = ctx.checker.getSymbolAtLocation(node.expression);
         if (!sym || !isLibDeclaration(sym)) return;
         if (node.expression.text !== "parseInt") return;
-        const radixTarget = node.arguments[0];
-        if (!radixTarget) return;
         ctx.reportAt(node, "parseInt requires radix argument", {
           action: "add-radix", pattern: "parseInt(str, 10)",
-          fix: ctx.insertAfter(radixTarget, ", 10"),
         });
       }
 
@@ -135,16 +132,8 @@ export default defineRule({
         let modified = false;
         function checkModification(n: ts.Node): void {
           if (modified) return;
-          if (ts.isBinaryExpression(n) && ts.isIdentifier(n.left)) {
-            const sym = ctx.checker.getSymbolAtLocation(n.left);
-            if (sym === condSym) { modified = true; return; }
-          }
-          if (ts.isPostfixUnaryExpression(n) || ts.isPrefixUnaryExpression(n)) {
-            if (ts.isIdentifier(n.operand)) {
-              const sym = ctx.checker.getSymbolAtLocation(n.operand);
-              if (sym === condSym) { modified = true; return; }
-            }
-          }
+          // A write only: assignment, ++/--, destructuring or a for-in/of head; a comparison or !x reads
+          if (ts.isIdentifier(n) && isWriteTarget(n) && valueSymbolOf(n, ctx.checker) === condSym) { modified = true; return; }
           ts.forEachChild(n, checkModification);
         }
         checkModification(node.statement);

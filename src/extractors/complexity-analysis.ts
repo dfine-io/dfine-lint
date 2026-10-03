@@ -1,6 +1,7 @@
 import ts from "typescript";
 import { defineExtractor } from "../helpers/define-extractor.js";
 import { getExportedFunctions } from "../core/program.js";
+import type { ExportedFunction } from "../core/program.js";
 import type { ComplexityMetrics } from "../types.js";
 
 const BRANCH_KINDS = new Set([
@@ -18,7 +19,7 @@ const LOGICAL_OPS = new Set([
 ]);
 
 function analyzeFunction(
-  node: ts.Node, sf: ts.SourceFile
+  node: ExportedFunction["func"], sf: ts.SourceFile
 ): Omit<ComplexityMetrics, "functionName" | "filePath"> {
   let cyclomaticComplexity = 1;
   let cognitiveComplexity = 0;
@@ -45,9 +46,6 @@ function analyzeFunction(
 
   const startLine = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   const endLine = sf.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
-  const params = (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) ||
-    ts.isFunctionExpression(node) || ts.isMethodDeclaration(node))
-    ? (node as ts.FunctionLikeDeclaration).parameters.length : 0;
 
   return {
     lineStart: startLine,
@@ -55,7 +53,7 @@ function analyzeFunction(
     cyclomaticComplexity,
     cognitiveComplexity,
     maxNestingDepth,
-    parameterCount: params,
+    parameterCount: node.parameters.length,
     helperFunctionCount,
     branchCount,
   };
@@ -72,7 +70,7 @@ export default defineExtractor<ComplexityMetrics>({
       results.push({
         functionName: fn.name.text,
         filePath: ctx.sourceFile.fileName,
-        ...analyzeFunction(fn.node, ctx.sourceFile),
+        ...analyzeFunction(fn.func, ctx.sourceFile),
       });
     }
     return results;

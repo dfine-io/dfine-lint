@@ -2,7 +2,7 @@
 // Useless computed keys, string concat of literals, and redundant .call()/.apply().
 // These patterns compile but add noise — simplify for clarity.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -15,6 +15,8 @@ export default defineRule({
       // 1. no-useless-computed-key — {["a"]: v} → {a: v}
       if (ts.isComputedPropertyName(node) && ts.isStringLiteral(node.expression)) {
         const keyVal = node.expression.text;
+        // { __proto__: v } sets the prototype and a class's constructor() is its constructor: here the computed key is needed
+        if ((keyVal === "__proto__" && ts.isPropertyAssignment(node.parent)) || (keyVal === "constructor" && ts.isClassLike(node.parent.parent))) return;
         const newKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(keyVal)
           ? keyVal
           : node.expression.getText(ctx.sourceFile);
@@ -46,9 +48,7 @@ export default defineRule({
         if (!thisArg) return;
         const receiver = node.expression.expression.expression;
         if (!ts.isIdentifier(thisArg) || !ts.isIdentifier(receiver)) return;
-        const thisSym = ctx.checker.getSymbolAtLocation(thisArg);
-        const recvSym = ctx.checker.getSymbolAtLocation(receiver);
-        if (thisSym && thisSym === recvSym) {
+        if (isSameReference(thisArg, receiver, ctx.checker)) {
           // Auto-fix only .call (spread args map 1:1). .apply passes an array, so dropping it
           // would change argument semantics -- leave .apply as advisory-only.
           const isCall = node.expression.name.text === "call";
@@ -73,8 +73,9 @@ export default defineRule({
       }
 
       // 4. object-shorthand — {a: a} → {a}
+      // { __proto__ } would define a property where { __proto__: __proto__ } sets the prototype
       if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && ts.isIdentifier(node.initializer) &&
-          node.name.text === node.initializer.text) {
+          node.name.text === node.initializer.text && node.name.text !== "__proto__") {
         ctx.reportAt(node, "Use shorthand property", {
           action: "use-shorthand",
           pattern: "Use shorthand - { a } not { a: a }",

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { resolve, join, dirname } from "node:path";
 import { lint } from "./core/engine.js";
@@ -7,7 +8,7 @@ import { loadConfig, loadRules } from "./config/loader.js";
 import { formatTable } from "./formatters/table.js";
 import { formatJson } from "./formatters/json.js";
 import { formatCompact } from "./formatters/compact.js";
-import type { CliOptions } from "./types.js";
+import type { CliOptions, LintResult } from "./types.js";
 
 // Any uncaught error (a malformed tsconfig surfaced by program creation, a rule that throws, etc.)
 // becomes a one-line `dlint:` message with the config-error exit code — never a raw stack trace.
@@ -88,24 +89,24 @@ Scan modes (default: full project):
 Config & target:
   --config <file>               Load this config; rulesDir + tsconfig resolve from its directory,
                                 so one rule set lints app + workers + packages from any cwd
-  --path <dir>                  Project root — loads <dir>/dlint.config.ts (default: cwd)
+  --path <dir>                  Project root, loads <dir>/dlint.config.ts if present (default: cwd)
   --rules <id...>               Only run these rule ids
 
 Output:
   --format <fmt>                json (default) | table | compact | html
-  --benchmark                   Show per-rule timing (table format)
-  --file-threshold <n>          Write report to /tmp when findings >= n (default 300)
+  --benchmark                   Total, phase and per-rule timing (stderr; json: "timings" field)
+  --file-threshold <n>          Write the report to a temp file when findings >= n (default 300)
   --no-error                    Exit 0 even when errors are found
 
 Autofix:
   --fix                         Apply available autofixes
-  --dry-run                     With --fix: show what would change, write nothing
+  --dry-run                     With --fix: count the fixes per file, write nothing
 
 Analysis:
   --extract                     Output extractor data as JSON (no linting)
   --list-rules                  Output loaded rules as JSON: id + description (no linting)
 
-Exit codes: 0 = clean · 1 = findings · 2 = usage/config error
+Exit codes: 0 = no errors · 1 = errors found · 2 = usage/config error or unknown file set
 `);
 }
 
@@ -207,11 +208,11 @@ if (!validFormats.has(opts.format)) {
   process.exit(2);
 }
 
-const { config, rules, skippedRules } = await (async () => {
+const { config, rules, skippedRules, disabledRules } = await (async () => {
   try {
     const config = await loadConfig(opts.path, opts.configPath);
-    const { rules, skipped } = await loadRules(opts.path, config);
-    return { config, rules, skippedRules: skipped };
+    const { rules, skipped, disabled } = await loadRules(opts.path, config);
+    return { config, rules, skippedRules: skipped, disabledRules: disabled };
   } catch (err) {
     process.stderr.write(`dlint: ${(err as Error).message}\n`);
     process.exit(2);
@@ -235,16 +236,32 @@ if (opts.listRules) {
 // Validate rule IDs
 if (opts.rules.length > 0) {
   const ruleIds = new Set(rules.map((r) => r.id));
-  const unknown = opts.rules.filter((r) => !ruleIds.has(r));
+  const off = opts.rules.filter((r) => disabledRules.includes(r));
+  const unknown = opts.rules.filter((r) => !ruleIds.has(r) && !disabledRules.includes(r));
+  if (off.length > 0) {
+    console.error(
+      `Error: Rule(s) turned off in config: ${off.join(", ")}.\nEnable them via "groups" or "overrides" in dlint.config.ts.`,
+    );
+  }
   if (unknown.length > 0) {
     console.error(
       `Error: Unknown rule(s): ${unknown.join(", ")}.\nAvailable: ${[...ruleIds].sort().join(", ")}`,
     );
-    process.exit(2);
   }
+  if (off.length > 0 || unknown.length > 0) process.exit(2);
+}
+
+// --benchmark outside json: total, phases and every rule on stderr, so stdout stays the report
+function writeTimings(result: LintResult): void {
+  const t = result.timings;
+  if (!t) return;
+  const phases = Object.entries(t.phases).map(([name, ms]) => `${name} ${ms}ms`).join(" · ");
+  const rules = t.rules.map((r) => `  ${r.ruleId.padEnd(32)} ${String(r.ms).padStart(6)}ms\n`).join("");
+  process.stderr.write(`dlint timing: total ${result.durationMs}ms (${phases})\n${rules}`);
 }
 
 if (opts.format === "html") {
+  if (opts.fix) throw new Error("--fix cannot be combined with --format html: run --fix first, then render the report");
   const { loadExtractors } = await import("./config/loader.js");
   const { extract } = await import("./core/extractor.js");
   const { formatHtml } = await import("./formatters/html.js");
@@ -276,7 +293,8 @@ if (opts.format === "html") {
   process.stdout.write(
     `dlint: report generated → .dlint/report/${baseName}.html\n`,
   );
-  process.exit(0);
+  writeTimings(lintResult);
+  process.exit(!opts.noError && lintResult.errorCount > 0 ? 1 : 0);
 }
 
 if (opts.extract) {
@@ -288,8 +306,7 @@ if (opts.extract) {
   process.exit(0);
 }
 
-const result = lint(opts, rules, config);
-if (skippedRules.length > 0) result.skippedRules = skippedRules;
+let result = lint(opts, rules, config);
 
 if (opts.fix && result.fixableCount > 0) {
   const { applyFixes } = await import("./core/fixer.js");
@@ -297,24 +314,30 @@ if (opts.fix && result.fixableCount > 0) {
   const totalApplied = fixResults.reduce((s, r) => s + r.applied, 0);
   const totalSkipped = fixResults.reduce((s, r) => s + r.skipped, 0);
   const verb = opts.dryRun ? "would fix" : "fixed";
-  process.stdout.write(
+  // stderr keeps stdout a clean report (valid JSON with --format json)
+  process.stderr.write(
     `dlint --fix: ${verb} ${totalApplied} issues in ${fixResults.length} files` +
       `${totalSkipped > 0 ? ` (${totalSkipped} skipped — overlap)` : ""}\n`,
   );
   if (opts.dryRun) {
     for (const r of fixResults) {
-      process.stdout.write(`  ${r.file}: ${r.applied} fixes\n`);
+      process.stderr.write(`  ${r.file}: ${r.applied} fixes\n`);
     }
+  } else if (totalApplied > 0) {
+    // Report what is left after the fixes: lint the same file set again
+    result = lint(opts, rules, config);
   }
 }
+if (skippedRules.length > 0) result.skippedRules = skippedRules;
+if (opts.format !== "json") writeTimings(result);
 
 const fmt = { table: formatTable, json: formatJson, compact: formatCompact };
 const output = fmt[opts.format](result, opts);
 const totalDiagnostics = result.errorCount + result.warningCount;
 
 if (opts.fileThreshold > 0 && totalDiagnostics >= opts.fileThreshold) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filePath = `/tmp/dlint-${timestamp}.json`;
+  // A fresh private directory: no predictable name another user could plant first
+  const filePath = join(mkdtempSync(join(tmpdir(), "dlint-")), `report.${opts.format === "json" ? "json" : "txt"}`);
   writeFileSync(filePath, output);
   process.stdout.write(
     `dlint: ${result.errorCount} errors, ${result.warningCount} warnings ` +

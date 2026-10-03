@@ -57,7 +57,6 @@ export default defineRule({
           action: "prefer-satisfies",
           pattern: `Replace 'as ${typeText}' with 'satisfies ${typeText}' - keeps literal precision`,
           reference: "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator",
-          fix: ctx.createFix(node, `${node.expression.getText(ctx.sourceFile)} satisfies ${typeText}`),
         },
       );
     });

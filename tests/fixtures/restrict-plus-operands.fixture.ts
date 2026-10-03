@@ -9,6 +9,10 @@ export const a = s + n; // EXPECT: restrict-plus-operands
 // POSITIVE: bigint + number
 export const b = big + n; // EXPECT: restrict-plus-operands
 
+// POSITIVE: a string mapping + number
+declare const up: Uppercase<string>;
+export const mapped = up + n; // EXPECT: restrict-plus-operands
+
 // NEGATIVE: number + number
 export const c = n + n;
 

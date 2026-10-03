@@ -2,7 +2,7 @@
 // .flatMap() over .map().flat(), .at() over [length-1], .startsWith(),
 // Object.hasOwn(), spread over Object.assign, destructuring over delete.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isNodeModulesDeclaration, isSameReference, isWriteTarget } from "@dfine-io-gmbh/dlint";
 
 const isNegativeOne = (n: ts.Expression): boolean =>
   ts.isPrefixUnaryExpression(n) &&
@@ -12,19 +12,10 @@ const isNegativeOne = (n: ts.Expression): boolean =>
 const isZeroLiteral = (n: ts.Expression): boolean =>
   ts.isNumericLiteral(n) && n.text === "0";
 
-/** TypeChecker symbol identity for expression pairs (Identifier, PropertyAccess, this) */
-function sameReceiver(a: ts.Expression, b: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (ts.isIdentifier(a) && ts.isIdentifier(b)) {
-    const symA = checker.getSymbolAtLocation(a);
-    return !!symA && symA === checker.getSymbolAtLocation(b);
-  }
-  if (ts.isPropertyAccessExpression(a) && ts.isPropertyAccessExpression(b)) {
-    const symA = checker.getSymbolAtLocation(a.name);
-    return !!symA && symA === checker.getSymbolAtLocation(b.name) &&
-      sameReceiver(a.expression, b.expression, checker);
-  }
-  if (a.kind === ts.SyntaxKind.ThisKeyword && b.kind === ts.SyntaxKind.ThisKeyword) return true;
-  return false;
+// The lib-declared member a receiver's type offers, so a suggestion only names an API that exists there
+function libMember(checker: ts.TypeChecker, receiver: ts.Expression, name: string): ts.Symbol | undefined {
+  const member = checker.getApparentType(checker.getTypeAtLocation(receiver)).getProperty(name);
+  return member && isLibDeclaration(member) ? member : undefined;
 }
 
 export default defineRule({
@@ -49,13 +40,10 @@ export default defineRule({
             op === ts.SyntaxKind.GreaterThanToken) && isNegativeOne(node.right)) ||
           (op === ts.SyntaxKind.GreaterThanEqualsToken && isZeroLiteral(node.right))
         ) {
-          const inclReceiver = node.left.expression.expression.getText(ctx.sourceFile);
-          const inclArg = node.left.arguments[0]?.getText(ctx.sourceFile) ?? "";
           ctx.reportAt(node, "Use .includes() instead of .indexOf() !== -1", {
             action: "prefer-includes",
             pattern: "arr.includes(x) instead of arr.indexOf(x) !== -1",
             reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
-            fix: ctx.createFix(node, inclReceiver + ".includes(" + inclArg + ")"),
           });
         }
       }
@@ -93,12 +81,13 @@ export default defineRule({
         const mapCall = (node.expression as ts.PropertyAccessExpression).expression as ts.CallExpression;
         const mapProp = mapCall.expression as ts.PropertyAccessExpression;
         const fmReceiver = mapProp.expression.getText(ctx.sourceFile);
-        const fmArg = mapCall.arguments[0]?.getText(ctx.sourceFile) ?? "";
+        // flatMap takes the same callback and thisArg as map
+        const fmArgs = mapCall.arguments.map((a) => a.getText(ctx.sourceFile)).join(", ");
         ctx.reportAt(node, ".map().flat() - use .flatMap()", {
           action: "use-flatmap",
           pattern: ".flatMap(fn) instead of .map(fn).flat()",
           reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
-          fix: ctx.createFix(node, fmReceiver + ".flatMap(" + fmArg + ")"),
+          fix: ctx.createFix(node, fmReceiver + ".flatMap(" + fmArgs + ")"),
         });
       }
 
@@ -108,17 +97,21 @@ export default defineRule({
         node.argumentExpression.operatorToken.kind === ts.SyntaxKind.MinusToken &&
         ts.isPropertyAccessExpression(node.argumentExpression.left) &&
         node.argumentExpression.left.name.text === "length" &&
-        sameReceiver(node.expression, node.argumentExpression.left.expression, ctx.checker)
+        isSameReference(node.expression, node.argumentExpression.left.expression, ctx.checker) &&
+        !isWriteTarget(node) && !!libMember(ctx.checker, node.expression, "at")
       ) {
         const lengthSym = ctx.checker.getSymbolAtLocation(node.argumentExpression.left.name);
         if (!lengthSym || (!isLibDeclaration(lengthSym) && !isNodeModulesDeclaration(lengthSym))) return;
         const atReceiver = node.expression.getText(ctx.sourceFile);
         const atOffset = node.argumentExpression.right;
+        // .at(-n) reads arr[arr.length - n] only for a whole n >= 1, and a callee would lose its this
+        const exact = ts.isNumericLiteral(atOffset) && Number.isInteger(Number(atOffset.text)) && Number(atOffset.text) >= 1;
+        const isCallee = ts.isCallExpression(node.parent) && node.parent.expression === node;
         ctx.reportAt(node, "arr[arr.length - N] - use arr.at(-N)", {
           action: "use-array-at",
           pattern: "arr.at(-1) instead of arr[arr.length - 1]",
           reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
-          fix: ts.isNumericLiteral(atOffset) ? ctx.createFix(node, atReceiver + ".at(-" + atOffset.text + ")") : undefined,
+          fix: exact && !isCallee ? ctx.createFix(node, atReceiver + ".at(-" + atOffset.text + ")") : undefined,
         });
       }
 
@@ -127,7 +120,8 @@ export default defineRule({
         ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
         ts.isCallExpression(node.left) && ts.isPropertyAccessExpression(node.left.expression) &&
         node.left.expression.name.text === "indexOf" &&
-        ts.isNumericLiteral(node.right) && node.right.text === "0"
+        ts.isNumericLiteral(node.right) && node.right.text === "0" &&
+        node.left.arguments.length === 1 && !!libMember(ctx.checker, node.left.expression.expression, "startsWith")
       ) {
         const ioSym = ctx.checker.getSymbolAtLocation(node.left.expression.name);
         if (!ioSym || (!isLibDeclaration(ioSym) && !isNodeModulesDeclaration(ioSym))) return;
@@ -136,7 +130,7 @@ export default defineRule({
         ctx.reportAt(node, ".indexOf(x) === 0 - use .startsWith(x)", {
           action: "use-starts-with",
           pattern: ".startsWith(x) instead of .indexOf(x) === 0",
-          reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
+          reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith",
           fix: ctx.createFix(node, swReceiver + ".startsWith(" + swArg + ")"),
         });
       }
@@ -150,6 +144,10 @@ export default defineRule({
       ) {
         const hopSym = ctx.checker.getSymbolAtLocation(node.expression.expression.name);
         if (!hopSym || !isLibDeclaration(hopSym)) return;
+        // Object.hasOwn exists from ES2022 on: suggest it only where the program's lib declares it
+        const objectSym = ctx.checker.resolveName("Object", node, ts.SymbolFlags.Value, false);
+        const hasOwn = objectSym && ctx.checker.getTypeOfSymbol(objectSym).getProperty("hasOwn");
+        if (!hasOwn || !isLibDeclaration(hasOwn)) return;
         const hoObj = node.arguments[0]?.getText(ctx.sourceFile) ?? "";
         const hoKey = node.arguments[1]?.getText(ctx.sourceFile) ?? "";
         ctx.reportAt(node, "Use Object.hasOwn() instead of hasOwnProperty.call()", {

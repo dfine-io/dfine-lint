@@ -2,7 +2,7 @@
 // without consuming them. A unit = a prop, a member path (handlers.a), or one {...spread}; identity
 // and callback-ness come from the type checker, so bundling/shadowing/data-rendering don't false-fire.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -149,10 +149,7 @@ export default defineRule({
         if (ts.isIdentifier(n) && rootNames.has(n.text)) {
           if (ts.isBindingElement(n.parent)) return;
           if (ts.isJsxAttribute(n.parent) && n.parent.name === n) return;
-          let sym = checker.getSymbolAtLocation(n);
-          if (ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n) {
-            sym = checker.getShorthandAssignmentValueSymbol(n.parent) ?? sym;
-          }
+          const sym = valueSymbolOf(n, checker);
           if (sym && rootSymbols.has(sym)) {
             const { path, rootNode } = resolveAccessPath(n);
             const display = n.text + path;

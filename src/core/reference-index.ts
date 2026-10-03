@@ -55,8 +55,7 @@ export function buildReferenceIndex(
         }
       }
       // Dynamic imports: import('./module') — mark all exports as referenced
-      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-          node.arguments.length === 1) {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const specifier = node.arguments[0];
         if (specifier && ts.isStringLiteral(specifier)) {
           const moduleSym = checker.getSymbolAtLocation(specifier);

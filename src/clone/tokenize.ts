@@ -15,21 +15,23 @@ export interface TokenizedBlock {
   node: ts.Node;
 }
 
+// Statement keywords and braces are no child nodes: control flow maps by node kind, operators by token kind
 const TOKEN_MAP: Partial<Record<ts.SyntaxKind, string>> = {
-  [ts.SyntaxKind.IfKeyword]: "IF",
-  [ts.SyntaxKind.ElseKeyword]: "ELSE",
-  [ts.SyntaxKind.ForKeyword]: "FOR",
-  [ts.SyntaxKind.WhileKeyword]: "WHILE",
-  [ts.SyntaxKind.ReturnKeyword]: "RET",
-  [ts.SyntaxKind.ConstKeyword]: "CONST",
-  [ts.SyntaxKind.LetKeyword]: "LET",
+  [ts.SyntaxKind.IfStatement]: "IF",
+  [ts.SyntaxKind.ForStatement]: "FOR",
+  [ts.SyntaxKind.ForInStatement]: "FOR",
+  [ts.SyntaxKind.ForOfStatement]: "FOR",
+  [ts.SyntaxKind.WhileStatement]: "WHILE",
+  [ts.SyntaxKind.DoStatement]: "WHILE",
+  [ts.SyntaxKind.ReturnStatement]: "RET",
+  [ts.SyntaxKind.AwaitExpression]: "AWAIT",
   [ts.SyntaxKind.AwaitKeyword]: "AWAIT",
-  [ts.SyntaxKind.NewKeyword]: "NEW",
-  [ts.SyntaxKind.ThrowKeyword]: "THROW",
-  [ts.SyntaxKind.TryKeyword]: "TRY",
-  [ts.SyntaxKind.CatchKeyword]: "CATCH",
-  [ts.SyntaxKind.SwitchKeyword]: "SWITCH",
-  [ts.SyntaxKind.CaseKeyword]: "CASE",
+  [ts.SyntaxKind.NewExpression]: "NEW",
+  [ts.SyntaxKind.ThrowStatement]: "THROW",
+  [ts.SyntaxKind.TryStatement]: "TRY",
+  [ts.SyntaxKind.CatchClause]: "CATCH",
+  [ts.SyntaxKind.SwitchStatement]: "SWITCH",
+  [ts.SyntaxKind.CaseClause]: "CASE",
   [ts.SyntaxKind.EqualsToken]: "=",
   [ts.SyntaxKind.EqualsEqualsEqualsToken]: "===",
   [ts.SyntaxKind.ExclamationEqualsEqualsToken]: "!==",
@@ -38,17 +40,15 @@ const TOKEN_MAP: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.AmpersandAmpersandToken]: "&&",
   [ts.SyntaxKind.BarBarToken]: "||",
   [ts.SyntaxKind.QuestionQuestionToken]: "??",
-  [ts.SyntaxKind.DotToken]: ".",
-  [ts.SyntaxKind.OpenParenToken]: "(",
-  [ts.SyntaxKind.CloseParenToken]: ")",
-  [ts.SyntaxKind.OpenBraceToken]: "{",
-  [ts.SyntaxKind.CloseBraceToken]: "}",
-  [ts.SyntaxKind.OpenBracketToken]: "[",
-  [ts.SyntaxKind.CloseBracketToken]: "]",
-  [ts.SyntaxKind.SemicolonToken]: ";",
   [ts.SyntaxKind.CommaToken]: ",",
   [ts.SyntaxKind.ColonToken]: ":",
   [ts.SyntaxKind.EqualsGreaterThanToken]: "=>",
+};
+
+// const and let carry no keyword node; the declaration list's flags tell them apart
+const DECLARATION_TOKEN: Partial<Record<number, string>> = {
+  [ts.NodeFlags.Const]: "CONST",
+  [ts.NodeFlags.Let]: "LET",
 };
 
 /** Normalize an AST node into a token sequence, abstracting identifiers and literals */
@@ -74,7 +74,9 @@ function tokenizeNode(node: ts.Node, tokens: string[]): void {
     return;
   }
 
-  const mapped = TOKEN_MAP[node.kind];
+  const mapped = ts.isVariableDeclarationList(node)
+    ? DECLARATION_TOKEN[node.flags & ts.NodeFlags.BlockScoped]
+    : TOKEN_MAP[node.kind];
   if (mapped) {
     tokens.push(mapped);
   }
@@ -107,8 +109,13 @@ function getFunctionName(node: ts.Node, sf: ts.SourceFile): string {
   return "<anonymous>";
 }
 
+// Both clone rules tokenize the whole program: one pass per source file serves both
+const blockCache = new WeakMap<ts.SourceFile, TokenizedBlock[]>();
+
 /** Extract all function-level blocks from a source file as tokenized sequences */
 export function tokenizeFile(sf: ts.SourceFile): TokenizedBlock[] {
+  const cached = blockCache.get(sf);
+  if (cached) return cached;
   const blocks: TokenizedBlock[] = [];
 
   function visit(node: ts.Node): void {
@@ -140,20 +147,26 @@ export function tokenizeFile(sf: ts.SourceFile): TokenizedBlock[] {
   }
 
   visit(sf);
+  blockCache.set(sf, blocks);
   return blocks;
 }
 
-/** Compute Jaccard similarity between two token arrays */
+const bigramCache = new WeakMap<readonly string[], Set<string>>();
+
+// Bigram set of a token array, cached: the clone rules compare each array against many others
+function bigramsOf(tokens: readonly string[]): Set<string> {
+  const cached = bigramCache.get(tokens);
+  if (cached) return cached;
+  const bigrams = new Set<string>();
+  for (let i = 0; i < tokens.length - 1; i++) bigrams.add(`${tokens[i]}|${tokens[i + 1]}`);
+  bigramCache.set(tokens, bigrams);
+  return bigrams;
+}
+
+/** Compute Jaccard similarity between two token arrays; sequences without bigrams score 0 */
 export function tokenSimilarity(a: readonly string[], b: readonly string[]): number {
-  if (a.length === 0 && b.length === 0) return 1;
-  if (a.length === 0 || b.length === 0) return 0;
-
-  // Use bigram sets for better accuracy than single tokens
-  const bigramsA = new Set<string>();
-  const bigramsB = new Set<string>();
-  for (let i = 0; i < a.length - 1; i++) bigramsA.add(`${a[i]}|${a[i + 1]}`);
-  for (let i = 0; i < b.length - 1; i++) bigramsB.add(`${b[i]}|${b[i + 1]}`);
-
+  const bigramsA = bigramsOf(a);
+  const bigramsB = bigramsOf(b);
   let intersection = 0;
   for (const bg of bigramsA) {
     if (bigramsB.has(bg)) intersection++;

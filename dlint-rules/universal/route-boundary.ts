@@ -5,7 +5,7 @@
 // ALLOWED_PAIRS: explicit route name pairs where cross-import is permitted.
 import ts from "typescript";
 import { relative, sep } from "node:path";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - defaults; a project overrides these via config
@@ -53,29 +53,27 @@ export default defineRule({
     const sourceSegs = getSegments(projectRoot, ctx.sourceFile.fileName);
     const sourceRoute = getTopLevelRoute(sourceSegs, appDir) ?? "";
     if (!sourceRoute) return;
-    const compilerOptions = ctx.program.getCompilerOptions();
 
     ctx.walk((node) => {
-      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-        checkImport(node, node.moduleSpecifier.text);
+      // A re-export crosses the boundary like an import; type-only forms count too, they couple the routes
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        checkImport(node, node.moduleSpecifier);
       }
       if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const [specifier] = node.arguments;
-        if (specifier && ts.isStringLiteral(specifier)) checkImport(node, specifier.text);
+        if (specifier && ts.isStringLiteral(specifier)) checkImport(node, specifier);
       }
     });
 
-    function checkImport(node: ts.Node, specifier: string): void {
-      const resolved = ts.resolveModuleName(specifier, ctx.sourceFile.fileName, compilerOptions, ts.sys);
-      const resolvedPath = resolved.resolvedModule?.resolvedFileName;
-      if (!resolvedPath) return;
-      const impSegs = getSegments(projectRoot, resolvedPath);
+    function checkImport(node: ts.Node, specifier: ts.StringLiteral): void {
+      const resolved = resolveImportedModule(ctx.program, specifier);
+      if (!resolved) return;
+      const impSegs = getSegments(projectRoot, resolved.resolvedFileName);
       const importRoute = getTopLevelRoute(impSegs, appDir);
       if (!importRoute) return;
       // Same top-level route — always allowed
       if (sourceRoute === importRoute) return;
-      const sf = ctx.program.getSourceFile(resolvedPath);
-      if (sf && ctx.program.isSourceFileFromExternalLibrary(sf)) return;
+      if (resolved.isExternalLibraryImport) return;
       const impPath = impSegs.join("/");
       if (allowedTargets.some(t => impPath.startsWith(t))) return;
       // Extract bare route names (strip groups) for allowedPairs check

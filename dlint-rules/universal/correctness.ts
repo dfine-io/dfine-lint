@@ -2,7 +2,7 @@
 // comparison to self, unreachable code after return/throw/break.
 // These patterns are almost always bugs, not intentional logic.
 import ts from "typescript";
-import { defineRule, isInsideLoop } from "@dfine-io-gmbh/dlint";
+import { defineRule, isInsideLoop, isSameReference, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 function isDescendantOf(child: ts.Node, ancestor: ts.Node): boolean {
   let current = child.parent;
@@ -13,21 +13,23 @@ function isDescendantOf(child: ts.Node, ancestor: ts.Node): boolean {
   return false;
 }
 
+// A literal written in the source (1, -1, 1n, "a"); a name or call whose type is a literal is no literal value
+function isLiteralValue(node: ts.Node): boolean {
+  if (ts.isParenthesizedExpression(node)) return isLiteralValue(node.expression);
+  if (ts.isPrefixUnaryExpression(node) && (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.PlusToken)) {
+    return isLiteralValue(node.operand);
+  }
+  return ts.isNumericLiteral(node) || ts.isBigIntLiteral(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+}
+
 function nodesReferSameSymbol(
   a: ts.Node,
   b: ts.Node,
   checker: ts.TypeChecker
 ): boolean {
+  // Identifiers, property chains, element access, this and parentheses through the SDK; literal receivers and keys below
+  if (ts.isExpression(a) && ts.isExpression(b) && isSameReference(a, b, checker)) return true;
   if (a.kind !== b.kind) return false;
-  // Identifier or PrivateIdentifier: compare via TypeChecker symbol identity
-  if (
-    (ts.isIdentifier(a) || ts.isPrivateIdentifier(a)) &&
-    (ts.isIdentifier(b) || ts.isPrivateIdentifier(b))
-  ) {
-    const symA = checker.getSymbolAtLocation(a);
-    const symB = checker.getSymbolAtLocation(b);
-    return !!symA && symA === symB;
-  }
   // Property access: x.a === x.a — both object and property must match
   if (ts.isPropertyAccessExpression(a) && ts.isPropertyAccessExpression(b)) {
     return (
@@ -42,7 +44,8 @@ function nodesReferSameSymbol(
       nodesReferSameSymbol(a.argumentExpression, b.argumentExpression, checker)
     );
   }
-  // Literal values: isLiteral() narrows to LiteralType with .value
+  // Only literal values compare by value: two constants or calls that share a literal type are still two values
+  if (!isLiteralValue(a) || !isLiteralValue(b)) return false;
   const typeA = checker.getTypeAtLocation(a);
   const typeB = checker.getTypeAtLocation(b);
   if (typeA.isLiteral() && typeB.isLiteral()) {
@@ -72,7 +75,8 @@ export default defineRule({
         node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         nodesReferSameSymbol(node.left, node.right, ctx.checker)
       ) {
-        ctx.reportAt(node, "Remove self-assignment -- has no effect", { action: "remove-self-assign", pattern: "Remove x = x", fix: ts.isExpressionStatement(node.parent) ? ctx.deleteNode(node.parent) : undefined });
+        // obj.p = obj.p can run a setter, so only a plain variable self-assignment is removed
+        ctx.reportAt(node, "Remove self-assignment -- has no effect", { action: "remove-self-assign", pattern: "Remove x = x", fix: ts.isIdentifier(node.left) && ts.isExpressionStatement(node.parent) ? ctx.deleteNode(node.parent) : undefined });
       }
 
       // no-self-compare: x === x
@@ -110,9 +114,7 @@ export default defineRule({
             stmt && ts.isThrowStatement(stmt) && stmt.expression && varDecl &&
             ts.isIdentifier(varDecl.name) && ts.isIdentifier(stmt.expression)
           ) {
-            const catchSym = ctx.checker.getSymbolAtLocation(varDecl.name);
-            const throwSym = ctx.checker.getSymbolAtLocation(stmt.expression);
-            if (catchSym && catchSym === throwSym) {
+            if (isSameReference(varDecl.name, stmt.expression, ctx.checker)) {
               ctx.reportAt(node.catchClause, "Remove useless catch -- re-throws without handling", { action: "remove-useless-catch", pattern: "Remove try/catch wrapper or add error handling" });
             }
           }
@@ -176,27 +178,9 @@ export default defineRule({
         ts.forEachChild(node.body, findReturn);
       }
 
-      // no-param-reassign (=, +=, -=, etc. and ++/--)
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        ts.isIdentifier(node.left)
-      ) {
-        const symbol = ctx.checker.getSymbolAtLocation(node.left);
-        if (symbol?.declarations?.some((d) => ts.isParameter(d))) {
-          ctx.reportAt(node, `Parameter '${node.left.text}' reassigned — use local variable`, { action: "use-local-var", pattern: "const localVar = param; modify localVar" });
-        }
-      }
-      if (
-        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-        ts.isIdentifier(node.operand)
-      ) {
-        const symbol = ctx.checker.getSymbolAtLocation(node.operand);
-        if (symbol?.declarations?.some((d) => ts.isParameter(d))) {
-          ctx.reportAt(node, `Parameter '${node.operand.text}' reassigned — use local variable`, { action: "use-local-var", pattern: "const localVar = param; modify localVar" });
-        }
+      // no-param-reassign: any write to a parameter (assignment, ++/--, destructuring, for-in/of head)
+      if (ts.isIdentifier(node) && isWriteTarget(node) && valueSymbolOf(node, ctx.checker)?.declarations?.some((d) => ts.isParameter(d))) {
+        ctx.reportAt(node, `Parameter '${node.text}' reassigned — use local variable`, { action: "use-local-var", pattern: "const localVar = param; modify localVar" });
       }
 
       // no-loop-func (function in loop capturing mutable outer variable — TypeChecker-verified)
@@ -209,7 +193,7 @@ export default defineRule({
         function scanCapture(n: ts.Node): void {
           if (capturesMutable) return;
           if (ts.isIdentifier(n) && !ts.isPropertyAccessExpression(n.parent)) {
-            const sym = ctx.checker.getSymbolAtLocation(n);
+            const sym = valueSymbolOf(n, ctx.checker);
             if (sym?.valueDeclaration && !isDescendantOf(sym.valueDeclaration, node)) {
               const declParent = sym.valueDeclaration.parent;
               if (ts.isVariableDeclarationList(declParent) && (declParent.flags & ts.NodeFlags.Let)) {
@@ -236,7 +220,9 @@ export default defineRule({
             if (ts.isEmptyStatement(stmt) || ts.isTypeAliasDeclaration(stmt) ||
                 ts.isInterfaceDeclaration(stmt) || ts.isEnumDeclaration(stmt) ||
                 ts.isFunctionDeclaration(stmt)) continue;
-            ctx.reportAt(stmt, `Remove unreachable code after terminator at line ${terminatorLine}`, { action: "remove-unreachable", pattern: "Remove unreachable code after return/throw/break/continue", fix: ctx.deleteNode(stmt) });
+            // Only a statement that declares nothing can go: an unreachable var is still hoisted, a let or class still shadows
+            const declaresNothing = ts.isExpressionStatement(stmt) || ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt) || ts.isBreakOrContinueStatement(stmt);
+            ctx.reportAt(stmt, `Remove unreachable code after terminator at line ${terminatorLine}`, { action: "remove-unreachable", pattern: "Remove unreachable code after return/throw/break/continue", fix: declaresNothing ? ctx.deleteNode(stmt) : undefined });
             break;
           }
           if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt) ||

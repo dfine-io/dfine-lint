@@ -1,5 +1,7 @@
+"use strict";
 "use server";
 // input-validation — exported SA with a user-constructible object param must call safeParse.
+// The "use strict" prologue ahead of "use server" checks that the whole directive prologue is read.
 import { z } from "zod";
 
 type Nested = { meta: { tag: string } };
@@ -21,3 +23,9 @@ export async function createOk(input: Nested) {
 export async function byId(id: string) {
   return id;
 }
+
+// POSITIVE: a server action exported through an export list
+async function listed(input: Nested) { // EXPECT: input-validation
+  return input.meta.tag;
+}
+export { listed as listedAction };

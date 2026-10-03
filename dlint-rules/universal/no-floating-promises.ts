@@ -2,7 +2,7 @@
 // Unhandled Promises silently swallow errors and cause unpredictable execution order.
 // Exempts logger calls which use fire-and-forget by convention.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isThenable } from "@dfine-io-gmbh/dlint";
 
 function isLoggerCall(expr: ts.CallExpression, checker: ts.TypeChecker): boolean {
   if (!ts.isPropertyAccessExpression(expr.expression)) return false;
@@ -10,7 +10,7 @@ function isLoggerCall(expr: ts.CallExpression, checker: ts.TypeChecker): boolean
   const type = checker.getTypeAtLocation(obj);
   if (!type.getProperty("info") || !type.getProperty("warn") || !type.getProperty("error")) return false;
   const sym = checker.getSymbolAtLocation(obj);
-  return sym?.declarations?.some((d) => !d.getSourceFile().fileName.includes("lib.dom")) ?? false;
+  return !!sym?.declarations?.length && !isLibDeclaration(sym);
 }
 
 function hasCatchInChain(
@@ -31,17 +31,6 @@ function hasCatchInChain(
   return false;
 }
 
-
-function isThenable(type: ts.Type, checker: ts.TypeChecker): boolean {
-  const thenProp = type.getProperty("then");
-  if (thenProp) {
-    const thenType = checker.getTypeOfSymbol(thenProp);
-    if (thenType.getCallSignatures().length > 0) return true;
-  }
-  if (type.isUnion()) return type.types.some((t) => isThenable(t, checker));
-  if (type.isIntersection()) return type.types.some((t) => isThenable(t, checker));
-  return false;
-}
 
 export default defineRule({
   meta: {
@@ -68,8 +57,6 @@ export default defineRule({
           if (hasCatchInChain(expr, ctx.checker)) return;
           if (isLoggerCall(expr, ctx.checker)) return;
         }
-        // Fix: only simple call expressions — ternary/conditional requires human decision
-        const canAutoFix = ts.isCallExpression(expr) && !ts.isConditionalExpression(expr.parent);
         ctx.reportAt(
           expr,
           `Await or catch floating Promise: ${ctx.checker.typeToString(type)}`,
@@ -77,7 +64,6 @@ export default defineRule({
             action: "add-await",
             pattern: "Await the Promise or guard with .catch(handler)",
             reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
-            fix: canAutoFix ? ctx.insertBefore(expr, "await ") : undefined,
           }
         );
       }

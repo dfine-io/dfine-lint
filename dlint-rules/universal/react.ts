@@ -2,7 +2,7 @@
 // no object/array literals in JSX props (causes re-renders),
 // and proper hook dependency patterns. Prevents silent performance bugs.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isNodeModulesDeclaration, resolveSymbol, isFromPackage } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isNodeModulesDeclaration, resolveSymbol, isFromPackage, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -39,7 +39,7 @@ function refsAnySymbol(node: ts.Node, symbols: Set<ts.Symbol>, checker: ts.TypeC
   function scan(n: ts.Node): void {
     if (found) return;
     if (ts.isIdentifier(n)) {
-      const sym = checker.getSymbolAtLocation(n);
+      const sym = valueSymbolOf(n, checker);
       if (sym && symbols.has(sym)) found = true;
     }
     ts.forEachChild(n, scan);

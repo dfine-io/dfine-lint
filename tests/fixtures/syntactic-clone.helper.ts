@@ -39,3 +39,29 @@ export function computeSmallClone(p: number, q: number) {
   const b7 = b6 * b2;
   return b7;
 }
+
+export function accumulateWhile(x: number, y: number) {
+  let s = 0;
+  while (x > y) s = s + x;
+  while (x < y) s = s + y;
+  while (s > x) s = s - y;
+  while (s < y) s = s + x;
+  while (x > s) s = s * y;
+  while (y > s) s = s + y;
+  while (s > 0) s = s - x;
+  while (s < 0) s = s + y;
+  return s;
+}
+
+export function pauseTenClone() {
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+  debugger;
+}

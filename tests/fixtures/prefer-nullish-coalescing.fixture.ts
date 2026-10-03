@@ -13,3 +13,13 @@ export function f() {
 
 // NEGATIVE: || on a boolean type
 export const b = flag || true;
+
+// POSITIVE: || on a type parameter whose constraint includes null
+export function genericNullable<T extends string | null>(x: T) {
+  return x || "default"; // EXPECT: prefer-nullish-coalescing
+}
+
+// NEGATIVE: || on a type parameter constrained to boolean | null keeps its truthiness meaning
+export function genericBoolean<B extends boolean | null>(flagValue: B) {
+  return flagValue || false;
+}

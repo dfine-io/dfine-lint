@@ -10,6 +10,14 @@ export const a = o.b && o.b.c; // EXPECT: prefer-optional-chain
 // POSITIVE: a != null && a.b
 export const b = p != null && p.b; // EXPECT: prefer-optional-chain
 
+// POSITIVE: this.a && this.a.b
+export class Holder {
+  inner: { v: number } | null = null;
+  read(): number | null {
+    return this.inner && this.inner.v; // EXPECT: prefer-optional-chain
+  }
+}
+
 // NEGATIVE: unrelated && operands
 export const n1 = o.b && p;
 

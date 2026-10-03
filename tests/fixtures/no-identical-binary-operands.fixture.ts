@@ -10,6 +10,10 @@ export const r2 = a / a; // EXPECT: no-identical-binary-operands
 export const r3 = b && b; // EXPECT: no-identical-binary-operands
 export const r4 = a > a; // EXPECT: no-identical-binary-operands
 export const r5 = obj.x | obj.x; // EXPECT: no-identical-binary-operands
+export const r6 = (obj).x - (obj).x; // EXPECT: no-identical-binary-operands
+declare const anyObj: any;
+export const r7 = anyObj.x - anyObj.x; // EXPECT: no-identical-binary-operands
+export const ok6 = anyObj.x - anyObj.y;
 
 // NEGATIVE: different operands, doubling/squaring ops, equality (handled elsewhere), side effects
 export const ok1 = a - c;

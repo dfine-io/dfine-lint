@@ -4,10 +4,7 @@
 import ts from "typescript";
 import { defineRule } from "@dfine-io-gmbh/dlint";
 
-const STRING_FLAGS =
-  ts.TypeFlags.String |
-  ts.TypeFlags.StringLiteral |
-  ts.TypeFlags.TemplateLiteral;
+const STRING_FLAGS = ts.TypeFlags.StringLike;
 const NUMBER_FLAGS = ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral;
 const BIGINT_FLAGS = ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
 

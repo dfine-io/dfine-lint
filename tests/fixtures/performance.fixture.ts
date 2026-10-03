@@ -1,11 +1,19 @@
-// performance — regex-in-loop, push-in-map, delete-on-array, long-chain.
-// (sync-io + barrel-import omitted: need node:fs / an index module — covered vs real code.)
+// performance — regex-in-loop, push-in-map, delete-on-array, long-chain, barrel-import.
+// (sync-io omitted: needs node:fs — covered vs real code.)
+import { barrelValue } from "./barrel"; // EXPECT: performance
+import type { BarrelShape } from "./barrel"; // NEGATIVE: a type import is erased, nothing to tree-shake
 declare const arr: number[];
+export const fromBarrel: BarrelShape = { size: barrelValue };
 
 export function regexInLoop(items: string[]) {
   for (const s of items) {
     new RegExp(s); // EXPECT: performance
   }
+}
+
+// NEGATIVE: the for-of iterable runs once, so its RegExp is built once
+export function regexInHeader(text: string, pattern: string) {
+  for (const m of text.match(new RegExp(pattern, "g")) ?? []) void m;
 }
 
 export function pushInMap() {

@@ -74,14 +74,6 @@ function symbolReachesRow(symbol: ts.Symbol, checker: ts.TypeChecker, seen: Set<
   );
 }
 
-function returnTypeNode(node: ts.Node): ts.TypeNode | undefined {
-  if (ts.isFunctionLike(node)) return node.type;
-  if (ts.isVariableDeclaration(node) && node.initializer && ts.isFunctionLike(node.initializer)) {
-    return node.initializer.type;
-  }
-  return undefined;
-}
-
 export default defineRule({
   meta: { category: "architecture", description: "DB-origin types must not cross a client boundary" },
   check(ctx) {
@@ -104,7 +96,7 @@ export default defineRule({
         }
         continue;
       }
-      const retType = returnTypeNode(fn.node);
+      const retType = fn.func.type;
       if (retType && nodeReachesRow(retType, checker, new Set(), rowQueryNames, rowModelNames)) {
         ctx.reportAt(fn.name, "Server Action returns a DB-origin type — project to a client-safe view", {
           action: "project-client-view",

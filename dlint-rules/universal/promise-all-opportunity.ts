@@ -29,13 +29,9 @@ function usesSymbol(node: ts.Node, target: ts.Symbol, checker: ts.TypeChecker): 
   if (ts.isIdentifier(node)) {
     const sym = checker.getSymbolAtLocation(node);
     if (sym === target) return true;
-    if (sym && sym.flags & ts.SymbolFlags.Property) {
-      const valueDecl = sym.valueDeclaration;
-      if (valueDecl && ts.isShorthandPropertyAssignment(valueDecl)) {
-        const valueSym = checker.getShorthandAssignmentValueSymbol(valueDecl);
-        if (valueSym === target) return true;
-      }
-    }
+    // A property a shorthand { a } created still carries a: holder().a reads the awaited value
+    const decl = sym && sym.flags & ts.SymbolFlags.Property ? sym.valueDeclaration : undefined;
+    if (decl && ts.isShorthandPropertyAssignment(decl) && checker.getShorthandAssignmentValueSymbol(decl) === target) return true;
   }
   let found = false;
   ts.forEachChild(node, (child) => {

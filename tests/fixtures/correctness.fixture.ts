@@ -110,6 +110,85 @@ export function loopFunc() {
   }
   return fns;
 }
+export function loopFuncShorthand() {
+  const fns: Array<() => { i: number }> = [];
+  for (let i = 0; i < 3; i++) {
+    fns.push(() => ({ i })); // EXPECT: correctness
+  }
+  return fns;
+}
+
+// POSITIVE: a parameter written through destructuring
+export function destructureParam(p: number, next: () => [number]) {
+  [p] = next(); // EXPECT: correctness
+  return p;
+}
+
+// POSITIVE: a parameter written through a shorthand pattern and a for-of head
+export function shorthandParam(p: number, next: () => { p: number }) {
+  ({ p } = next()); // EXPECT: correctness
+  return p;
+}
+export function forOfParam(p: number, xs: number[]) {
+  for (p of xs) { // EXPECT: correctness
+    void p;
+  }
+}
+
+// NEGATIVE: a parameter used as a shorthand default value is read, not written
+export function defaultFrom(p: number, obj: { a?: number }) {
+  let a = 0;
+  ({ a = p } = obj);
+  return a + p;
+}
+
+// POSITIVE: self-assignment through this
+export class Box {
+  size = 1;
+  touch() {
+    this.size = this.size; // EXPECT: correctness
+  }
+}
+
+// NEGATIVE: two constants, or two narrowed strings, that hold one literal are still two values
+const SCHEMA = 3;
+const EXPECTED = 3;
+export const sameValue = SCHEMA === EXPECTED;
+export function narrowedPair(a: string, b: string) {
+  if (a === "x" && b === "x") return a === b;
+  return false;
+}
+
+// NEGATIVE: wrapped constants and calls that share a literal type are still two values
+declare function okA(): "ok";
+declare function okB(): "ok";
+export const wrappedPair = (SCHEMA) === (EXPECTED);
+export const callPair = okA() === okB();
+
+// NEGATIVE: a negated bigint is another value
+export const signedPair = (-1n) === (1n);
+
+// POSITIVE: a parenthesized operand, a negated literal and a literal receiver compare to themselves
+export function selfForms(x: number) {
+  const p = x === (x); // EXPECT: correctness
+  const q = -1 === -1; // EXPECT: correctness
+  const r = "ab".length === "ab".length; // EXPECT: correctness
+  const s = (1) === (1); // EXPECT: correctness
+  const t = +1 === +1; // EXPECT: correctness
+  const u = 1n === 1n; // EXPECT: correctness
+  const v = -1n === -1n; // EXPECT: correctness
+  const w = `t` === `t`; // EXPECT: correctness
+  return [p, q, r, s, t, u, v, w];
+}
+
+// NEGATIVE: a catch that throws another error is no plain re-throw
+export function rethrowOther(other: Error) {
+  try {
+    return 1;
+  } catch (e) {
+    throw other;
+  }
+}
 
 // NEGATIVE: clean function, no issues
 export function clean(a: number) {
@@ -124,4 +203,13 @@ export function loopFuncConst() {
     fns.push(() => i);
   }
   return fns;
+}
+
+// NEGATIVE: an arrow in the for-of iterable is created once, not per iteration
+export function iterableArrow(items: number[]) {
+  let scale = 2;
+  scale += 1;
+  const out: number[] = [];
+  for (const v of items.map((x) => x * scale)) out.push(v);
+  return out;
 }

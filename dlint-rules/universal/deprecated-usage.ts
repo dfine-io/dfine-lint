@@ -1,8 +1,8 @@
 // Flags usage of symbols annotated with @deprecated JSDoc tag.
-// Catches call expressions, property accesses, and standalone identifiers.
+// Catches call expressions, property accesses, and standalone identifiers; TypeScript's lib counts like any other code.
 // Excludes self-references within the deprecated declaration itself.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveSymbol, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 const deprecatedCache = new WeakMap<
   import("typescript").Symbol,
@@ -15,28 +15,22 @@ export default defineRule({
     description: "Usage of @deprecated symbols",
   },
   check(ctx) {
-    function isDeprecated(node: ts.Node): string | null {
-      const rawSymbol = ctx.checker.getSymbolAtLocation(node);
+    function isDeprecated(node: ts.Identifier): string | null {
+      const rawSymbol = valueSymbolOf(node, ctx.checker);
       const symbol = rawSymbol ? resolveSymbol(ctx.checker, rawSymbol) : null;
       if (!symbol) return null;
       const cached = deprecatedCache.get(symbol);
       if (cached !== undefined) return cached;
-      if (isLibDeclaration(symbol)) {
-        deprecatedCache.set(symbol, null);
-        return null;
-      }
-      const tag = symbol
-        .getJsDocTags(ctx.checker)
-        .find((t) => t.name === "deprecated");
-      const result = tag
-        ? ts.displayPartsToString(tag.text) || "deprecated"
-        : null;
+      // A reference cannot pick an overload: it is deprecated only when every declaration is
+      const tags = (symbol.declarations ?? []).map((d) => ts.getJSDocDeprecatedTag(d));
+      const tag = tags.length > 0 && tags.every((t) => t !== undefined) ? tags[0] : undefined;
+      const result = tag ? ts.getTextOfJSDocComment(tag.comment) || "deprecated" : null;
       deprecatedCache.set(symbol, result);
       return result;
     }
 
     function isInOwnDeclaration(node: ts.Node): boolean {
-      const nodeSymbol = ctx.checker.getSymbolAtLocation(node);
+      const nodeSymbol = ts.isIdentifier(node) ? valueSymbolOf(node, ctx.checker) : ctx.checker.getSymbolAtLocation(node);
       if (!nodeSymbol) return false;
       let parent = node.parent;
       while (parent) {
@@ -56,10 +50,10 @@ export default defineRule({
       return false;
     }
 
-    function check(node: ts.Node, name: string): void {
-      if (isInOwnDeclaration(node)) return;
+    function check(node: ts.Identifier, name: string): void {
       const reason = isDeprecated(node);
-      if (reason) {
+      // The deprecation test hits a per-symbol cache; the ancestor walk only runs for a deprecated hit
+      if (reason && !isInOwnDeclaration(node)) {
         ctx.reportAt(
           node,
           `Replace deprecated '${name}'${reason !== "deprecated" ? `: ${reason}` : ""}`,
@@ -74,17 +68,15 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (ts.isCallExpression(node)) {
-        if (isInOwnDeclaration(node)) return;
         const sig = ctx.checker.getResolvedSignature(node);
         const decl = sig?.getDeclaration();
         if (!decl) return;
         const depTag = ts.getJSDocDeprecatedTag(decl);
         if (!depTag) return;
-        const name = ts.isPropertyAccessExpression(node.expression)
-          ? node.expression.name.text
-          : ts.isIdentifier(node.expression)
-            ? node.expression.text
-            : "call";
+        const callee = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression;
+        // A call node has no symbol: test the callee, so a deprecated function may call itself
+        if (isInOwnDeclaration(callee)) return;
+        const name = ts.isIdentifier(callee) || ts.isPrivateIdentifier(callee) ? callee.text : "call";
         const reason = ts.getTextOfJSDocComment(depTag.comment) || "deprecated";
         ctx.reportAt(node, `Replace deprecated '${name}'${reason !== "deprecated" ? `: ${reason}` : ""}`, {
           action: "replace-deprecated",
@@ -98,8 +90,9 @@ export default defineRule({
       }
       if (
         ts.isIdentifier(node) &&
-        !ts.isCallExpression(node.parent) &&
-        !ts.isPropertyAccessExpression(node.parent) &&
+        // The branches above cover a callee and a member name; an argument or a receiver is checked here
+        !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
+        !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
         !ts.isPropertyDeclaration(node.parent) &&
         !ts.isMethodDeclaration(node.parent) &&
         !ts.isFunctionDeclaration(node.parent) &&

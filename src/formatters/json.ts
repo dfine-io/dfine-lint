@@ -15,6 +15,7 @@ export function formatJson(result: LintResult, _: CliOptions): string {
         ...(result.skippedRules?.length
           ? { skippedRules: result.skippedRules }
           : {}),
+        timings: result.timings,
       },
       null,
       2

@@ -2,7 +2,7 @@
 // ""+x instead of String(x), !! in boolean context.
 // Explicit conversions make intent clear and prevent subtle bugs.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isInBooleanContext, isStringType } from "@dfine-io-gmbh/dlint";
 
 /** NullKeyword or undefined type (TypeChecker-verified, not name-based) */
 function isNullishLiteral(n: ts.Node, checker: ts.TypeChecker): boolean {
@@ -29,7 +29,7 @@ export default defineRule({
       ) {
         if (isNullishLiteral(node.right, ctx.checker) || isNullishLiteral(node.left, ctx.checker)) return;
         const isEq = node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken;
-        ctx.reportAt(node.operatorToken, `Use ${isEq ? "===" : "!=="} instead of ${isEq ? "==" : "!="}`, { action: "use-strict-equality", pattern: "value === other or value !== other", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness", fix: ctx.createFix(node.operatorToken, isEq ? "===" : "!==") });
+        ctx.reportAt(node.operatorToken, `Use ${isEq ? "===" : "!=="} instead of ${isEq ? "==" : "!="}`, { action: "use-strict-equality", pattern: "value === other or value !== other", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness" });
       }
 
       // no-implicit-coercion: +x → Number(x) (skip if operand is already number)
@@ -41,7 +41,7 @@ export default defineRule({
       ) {
         const operandType = ctx.checker.getTypeAtLocation(node.operand);
         if (!(operandType.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral))) {
-          ctx.reportAt(node, "Use Number(x) instead of +x", { action: "use-number-constructor", pattern: "Number(x) for numeric conversion", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness", fix: ctx.createFix(node, "Number(" + node.operand.getText(ctx.sourceFile) + ")") });
+          ctx.reportAt(node, "Use Number(x) instead of +x", { action: "use-number-constructor", pattern: "Number(x) for numeric conversion", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness" });
         }
       }
       // no-implicit-coercion: "" + x → String(x) (skip if right is already string)
@@ -51,8 +51,8 @@ export default defineRule({
         ts.isStringLiteral(node.left) && node.left.text === "" && !ts.isStringLiteral(node.right)
       ) {
         const rightType = ctx.checker.getTypeAtLocation(node.right);
-        if (!(rightType.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral))) {
-          ctx.reportAt(node, 'Use String(x) instead of "" + x', { action: "use-string-constructor", pattern: "String(x) instead of '' + x", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness", fix: ctx.createFix(node, "String(" + node.right.getText(ctx.sourceFile) + ")") });
+        if (!isStringType(rightType)) {
+          ctx.reportAt(node, 'Use String(x) instead of "" + x', { action: "use-string-constructor", pattern: "String(x) instead of '' + x", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness" });
         }
       }
 
@@ -64,19 +64,8 @@ export default defineRule({
       ) {
         const innerType = ctx.checker.getTypeAtLocation(node.operand.operand);
         if (innerType.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return;
-        let current: ts.Node = node;
-        while (current.parent) {
-          if (
-            (ts.isIfStatement(current.parent) && current.parent.expression === current) ||
-            (ts.isWhileStatement(current.parent) && current.parent.expression === current) ||
-            (ts.isDoStatement(current.parent) && current.parent.expression === current) ||
-            (ts.isConditionalExpression(current.parent) && current.parent.condition === current)
-          ) {
-            ctx.reportAt(node, "Unnecessary !! in boolean context", { action: "remove-double-negation", pattern: "Remove !!, condition already boolean", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness", fix: ctx.createFix(node, node.operand.operand.getText(ctx.sourceFile)) });
-            return;
-          }
-          if (ts.isParenthesizedExpression(current.parent)) { current = current.parent; continue; }
-          break;
+        if (isInBooleanContext(node)) {
+          ctx.reportAt(node, "Unnecessary !! in boolean context", { action: "remove-double-negation", pattern: "Remove !!, condition already boolean", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness", fix: ctx.createFix(node, node.operand.operand.getText(ctx.sourceFile)) });
         }
       }
     });

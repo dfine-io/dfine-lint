@@ -39,3 +39,26 @@ export async function chunkedInsert(chunks: unknown[][]) {
 export async function ok() {
   await db.select().from(table);
 }
+
+// POSITIVE: transaction on a db handle held in a context object
+declare const ctx: { db: DbMock };
+export async function ctxTx() {
+  await ctx.db.transaction(async () => undefined); // EXPECT: no-db-antipatterns
+}
+
+// POSITIVE: N+1 through a class-held handle
+export class Repo {
+  constructor(private readonly db: DbMock) {}
+  async load(ids: number[]) {
+    for (const id of ids) {
+      await this.db.select().from(table).where(id); // EXPECT: no-db-antipatterns
+    }
+  }
+}
+
+// NEGATIVE: the for-of iterable runs once, not per iteration
+export async function iterableOnce() {
+  for (const row of await db.select().from(table)) {
+    void row;
+  }
+}

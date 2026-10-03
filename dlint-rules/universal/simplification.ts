@@ -2,7 +2,7 @@
 // collapsible if, useless constructor, redundant boolean return, prefer while,
 // prefer immediate return, prefer object literal.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -55,7 +55,8 @@ export default defineRule({
         const hasParamProps = node.parameters.some((p) =>
           ts.getCombinedModifierFlags(p) & ts.ModifierFlags.ParameterPropertyModifier
         );
-        if (hasParamProps) return;
+        // A private or protected constructor restricts who may construct the class
+        if (hasParamProps || ts.getCombinedModifierFlags(node) & (ts.ModifierFlags.Private | ts.ModifierFlags.Protected)) return;
         const isEmpty = node.body.statements.length === 0 && node.parameters.length === 0;
         const [firstStmt] = node.body.statements;
         const isSuperOnly =
@@ -64,6 +65,7 @@ export default defineRule({
           ts.isExpressionStatement(firstStmt) &&
           ts.isCallExpression(firstStmt.expression) &&
           firstStmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword &&
+          firstStmt.expression.arguments.length === 0 &&
           node.parameters.length === 0;
         if (isEmpty || isSuperOnly) {
           ctx.reportAt(node, "Delete empty or super-only constructor", { action: "remove-constructor", pattern: "Remove useless constructor", fix: ctx.deleteNode(node) });
@@ -106,11 +108,9 @@ export default defineRule({
           if (!decl) continue;
           if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
           if (!next.expression || !ts.isIdentifier(next.expression)) continue;
-          const declSym = ctx.checker.getSymbolAtLocation(decl.name);
-          const retSym = ctx.checker.getSymbolAtLocation(next.expression);
           const declType = decl.type ? ctx.checker.getTypeFromTypeNode(decl.type) : null;
           if (declType && declType.flags & ts.TypeFlags.Never) continue;
-          if (declSym && declSym === retSym) {
+          if (isSameReference(decl.name, next.expression, ctx.checker)) {
             ctx.reportAt(curr, "Return expression directly without temp variable", {
               action: "inline-return", pattern: "Replace const x = expr; return x with return expr",
             });
@@ -131,9 +131,7 @@ export default defineRule({
           if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
           if (!ts.isObjectLiteralExpression(decl.initializer) || decl.initializer.properties.length > 0) continue;
           if (!ts.isBinaryExpression(next.expression) || !ts.isPropertyAccessExpression(next.expression.left)) continue;
-          const declSym = ctx.checker.getSymbolAtLocation(decl.name);
-          const assignSym = ctx.checker.getSymbolAtLocation(next.expression.left.expression);
-          if (declSym && declSym === assignSym) {
+          if (isSameReference(decl.name, next.expression.left.expression, ctx.checker)) {
             ctx.reportAt(decl, "Use object literal syntax with properties", {
               action: "use-literal", pattern: "Replace const o = {}; o.a = 1 with const o = { a: 1 }",
             });

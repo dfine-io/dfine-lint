@@ -1,48 +1,29 @@
 // Detects circular imports via Tarjan's SCC algorithm on the program-wide import graph.
 // Circular dependencies cause initialization order bugs and undefined imports at runtime.
-// Exempts type-only imports which are erased at compile time and cannot cause cycles.
+// Exempts type-only imports (erased at compile time) and import() calls (they run after initialization).
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { collectValueImports, defineRule, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 const sccCacheMap = new WeakMap<
   ts.Program,
   Map<string, number>
 >();
 
-function isTypeOnlyImport(stmt: ts.ImportDeclaration): boolean {
-  if (stmt.importClause?.isTypeOnly) return true;
-  const bindings = stmt.importClause?.namedBindings;
-  if (bindings && ts.isNamedImports(bindings) && bindings.elements.length > 0) {
-    return bindings.elements.every(e => e.isTypeOnly);
-  }
-  return false;
+// Static value imports and re-exports: an import() call cannot take part in an initialization cycle
+function staticValueImports(program: ts.Program, sf: ts.SourceFile): ts.StringLiteral[] {
+  return collectValueImports(program, sf).filter((literal) => !ts.isCallExpression(literal.parent));
 }
 
 function buildImportGraph(program: ts.Program): Map<string, string[]> {
   const graph = new Map<string, string[]>();
-  const options = program.getCompilerOptions();
 
   for (const sf of program.getSourceFiles()) {
     if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
     const deps: string[] = [];
-
-    for (const stmt of sf.statements) {
-      let specifier: ts.StringLiteral | undefined;
-      if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        if (isTypeOnlyImport(stmt)) continue;
-        specifier = stmt.moduleSpecifier;
-      }
-      if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        if (stmt.isTypeOnly) continue;
-        specifier = stmt.moduleSpecifier;
-      }
-      if (!specifier) continue;
-      const resolved = ts.resolveModuleName(specifier.text, sf.fileName, options, ts.sys);
-      if (resolved.resolvedModule && !resolved.resolvedModule.isExternalLibraryImport) {
-        deps.push(resolved.resolvedModule.resolvedFileName);
-      }
+    for (const literal of staticValueImports(program, sf)) {
+      const resolved = resolveImportedModule(program, literal);
+      if (resolved && !resolved.isExternalLibraryImport) deps.push(resolved.resolvedFileName);
     }
-
     graph.set(sf.fileName, deps);
   }
 
@@ -92,9 +73,8 @@ function computeSCCs(graph: Map<string, string[]>): Map<string, number> {
         members.push(w);
       } while (w !== v);
 
-      const isCycle =
-        members.length > 1 ||
-        (members.length === 1 && (graph.get(v) ?? []).includes(v));
+      // A file importing itself is self-import's finding
+      const isCycle = members.length > 1;
 
       for (const m of members) {
         result.set(m, isCycle ? sccId : -1);
@@ -129,35 +109,13 @@ export default defineRule({
     const myScc = sccCache.get(fileName);
     if (myScc === undefined || myScc === -1) return;
 
-    const options = ctx.program.getCompilerOptions();
-
-    for (const stmt of ctx.sourceFile.statements) {
-      if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        if (isTypeOnlyImport(stmt)) continue;
-      } else if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        if (stmt.isTypeOnly) continue;
-      } else { continue; }
-      if (
-        stmt.moduleSpecifier &&
-        ts.isStringLiteral(stmt.moduleSpecifier)
-      ) {
-        const resolved = ts.resolveModuleName(
-          stmt.moduleSpecifier.text,
-          fileName,
-          options,
-          ts.sys
-        );
-        if (
-          resolved.resolvedModule &&
-          !resolved.resolvedModule.isExternalLibraryImport &&
-          sccCache.get(resolved.resolvedModule.resolvedFileName) === myScc
-        ) {
-          ctx.reportAt(stmt, `Break circular import: ${stmt.moduleSpecifier.text}`, {
-            action: "break-cycle",
-            pattern:
-              "Extract shared types/functions to a separate module to break the cycle",
-          });
-        }
+    for (const literal of staticValueImports(ctx.program, ctx.sourceFile)) {
+      const resolved = resolveImportedModule(ctx.program, literal);
+      if (resolved && !resolved.isExternalLibraryImport && sccCache.get(resolved.resolvedFileName) === myScc) {
+        ctx.reportAt(literal.parent, `Break circular import: ${literal.text}`, {
+          action: "break-cycle",
+          pattern: "Extract shared types/functions to a separate module to break the cycle",
+        });
       }
     }
   },

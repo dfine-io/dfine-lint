@@ -2,20 +2,7 @@
 // Reduces boilerplate and prevents accidental truthiness checks on falsy-but-valid values.
 // Uses symbol resolution to verify both sides of the chain reference the same variable.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
-
-function chainsMatch(a: ts.Expression, b: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (ts.isIdentifier(a) && ts.isIdentifier(b)) {
-    const symA = checker.getSymbolAtLocation(a);
-    return !!symA && symA === checker.getSymbolAtLocation(b);
-  }
-  if (ts.isPropertyAccessExpression(a) && ts.isPropertyAccessExpression(b)) {
-    const symA = checker.getSymbolAtLocation(a.name);
-    return !!symA && symA === checker.getSymbolAtLocation(b.name) &&
-      chainsMatch(a.expression, b.expression, checker);
-  }
-  return false;
-}
+import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -43,7 +30,7 @@ export default defineRule({
         ts.isIdentifier(left) &&
         ts.isPropertyAccessExpression(right) &&
         ts.isIdentifier(right.expression) &&
-        (() => { const s = ctx.checker.getSymbolAtLocation(left); return !!s && s === ctx.checker.getSymbolAtLocation(right.expression); })()
+        isSameReference(left, right.expression, ctx.checker)
       ) {
         report(left.text, right, node);
         return;
@@ -54,7 +41,7 @@ export default defineRule({
         ts.isPropertyAccessExpression(right) &&
         ts.isPropertyAccessExpression(right.expression)
       ) {
-        if (chainsMatch(left, right.expression, ctx.checker)) {
+        if (isSameReference(left, right.expression, ctx.checker)) {
           const lc = getChainText(left);
           report(lc, right, node);
           return;
@@ -70,11 +57,8 @@ export default defineRule({
           (ts.isIdentifier(left.right) && left.right.text === "undefined")) &&
         ts.isPropertyAccessExpression(right)
       ) {
-        if (ts.isIdentifier(left.left) && ts.isIdentifier(right.expression)) {
-          const sym = ctx.checker.getSymbolAtLocation(left.left);
-          if (sym && sym === ctx.checker.getSymbolAtLocation(right.expression)) {
-            report(left.left.text, right, node);
-          }
+        if (ts.isIdentifier(left.left) && ts.isIdentifier(right.expression) && isSameReference(left.left, right.expression, ctx.checker)) {
+          report(left.left.text, right, node);
         }
       }
     });
@@ -90,7 +74,6 @@ export default defineRule({
         {
           action: "use-optional-chain",
           pattern: `Use optional chain ${base}?.${access.name.text} instead of && guard`,
-          fix: ctx.createFix(node, base + "?." + access.name.text),
           reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Optional_chaining",
         }
       );

@@ -32,10 +32,7 @@ export default defineRule({
           ) {
             const errSym = ctx.checker.getSymbolAtLocation(stmt.expression.expression);
             if (errSym && isLibDeclaration(errSym)) {
-              const catchVarName = node.variableDeclaration && ts.isIdentifier(node.variableDeclaration.name) ? node.variableDeclaration.name.text : undefined;
-              const causeArg = stmt.expression.arguments?.[0];
-              const causeFix = catchVarName && causeArg ? ctx.insertAfter(causeArg, ", { cause: " + catchVarName + " }") : undefined;
-              ctx.reportAt(stmt, "Add { cause: original } to new Error re-throw for error chain", { action: "use-error-cause", pattern: "Wrap message with { cause: error } in new Error constructor", fix: causeFix, reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause" });
+              ctx.reportAt(stmt, "Add { cause: original } to new Error re-throw for error chain", { action: "use-error-cause", pattern: "Wrap message with { cause: error } in new Error constructor", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause" });
             }
           }
         }

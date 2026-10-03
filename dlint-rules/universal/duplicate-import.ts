@@ -1,8 +1,9 @@
 // Flags multiple import declarations resolving to the same physical file.
 // Prevents import fragmentation that makes dependencies harder to track.
-// Exempts mixed type-only/value imports that cannot be merged per TS rules.
+// Groups type-only and value imports apart: a type-only import beside value imports is exempt,
+// duplicates within each kind still count.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isTypeOnlyImport, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -14,7 +15,8 @@ export default defineRule({
       readonly moduleSpecifier: ts.StringLiteral;
     };
     const imports = new Map<string, ImportEntry[]>();
-    const compilerOptions = ctx.program.getCompilerOptions();
+    const options = ctx.program.getCompilerOptions();
+    const typeOnly = (d: ImportEntry): boolean => isTypeOnlyImport(d, options);
 
     ts.forEachChild(ctx.sourceFile, (node) => {
       if (
@@ -22,15 +24,9 @@ export default defineRule({
         ts.isStringLiteral(node.moduleSpecifier)
       ) {
         const entry = node as ImportEntry;
-        const resolved = ts.resolveModuleName(
-          entry.moduleSpecifier.text,
-          ctx.sourceFile.fileName,
-          compilerOptions,
-          ts.sys
-        );
         const key =
-          resolved.resolvedModule?.resolvedFileName ??
-          entry.moduleSpecifier.text;
+          (resolveImportedModule(ctx.program, entry.moduleSpecifier)?.resolvedFileName ??
+          entry.moduleSpecifier.text) + (typeOnly(entry) ? "\0type" : "");
         const existing = imports.get(key);
         if (existing) existing.push(entry);
         else imports.set(key, [entry]);
@@ -39,21 +35,8 @@ export default defineRule({
 
     for (const [, decls] of imports) {
       if (decls.length < 2) continue;
-      // Check type-only at both declaration AND specifier level (TS 4.5+)
-      const isFullyTypeOnly = (d: ImportEntry): boolean => {
-        if (d.importClause?.isTypeOnly) return true;
-        const bindings = d.importClause?.namedBindings;
-        if (bindings && ts.isNamedImports(bindings)) {
-          return bindings.elements.length > 0 &&
-            bindings.elements.every((el) => el.isTypeOnly);
-        }
-        return false;
-      };
-      // Skip mixed: some fully type-only + some with value imports
-      if (decls.some(isFullyTypeOnly) && decls.some((d) => !isFullyTypeOnly(d)))
-        continue;
       // Skip TS 1363: all type-only with default + named bindings (unmergeable)
-      if (decls.every(isFullyTypeOnly)) {
+      if (decls.every(typeOnly)) {
         const hasDefault = decls.some((d) => !!d.importClause?.name);
         const hasNamed = decls.some((d) => {
           const b = d.importClause?.namedBindings;
@@ -87,11 +70,7 @@ export default defineRule({
         }
         mergeFix = [
           ctx.createFix(firstNb, `{ ${specs.join(", ")} }`),
-          ...decls.slice(1).map((d) => ({
-            start: d.getStart(sf),
-            length: d.getWidth(sf) + 1,
-            newText: "",
-          })),
+          ...decls.slice(1).map((d) => ctx.deleteNode(d)),
         ];
       }
 

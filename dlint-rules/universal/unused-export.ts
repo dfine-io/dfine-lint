@@ -30,22 +30,10 @@ export default defineRule({
           ? decl.name
           : decl;
 
-      // Auto-fix: drop the `export` keyword on a named declaration (never `export default`,
-      // never a re-export) -- turns the dead public API into a local, references intact.
-      const modHost = ts.isVariableDeclaration(decl) ? decl.parent?.parent : decl;
-      const mods = modHost && ts.canHaveModifiers(modHost) ? ts.getModifiers(modHost) : undefined;
-      const exportKw = mods?.find((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-      const isDefault = mods?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ?? false;
-      const exportFix =
-        exportKw && !isDefault
-          ? { start: exportKw.getStart(sf), length: exportKw.getWidth(sf) + 1, newText: "" }
-          : undefined;
-
       ctx.reportAt(nameNode, `Remove unused export '${exp.name}' -- no cross-file references`, {
         action: "remove-unused-export",
         pattern: "Remove the export keyword - delete the declaration if nothing in-file uses it",
         reference: "https://www.typescriptlang.org/docs/handbook/modules/reference.html",
-        ...(exportFix ? { fix: exportFix } : {}),
       });
     }
   },

@@ -2,27 +2,13 @@
 // but .returning() is missing from the query chain.
 // Without .returning(), the assigned variable contains metadata, not the row data.
 import ts from "typescript";
-import { defineRule, hasDirective, isDbCall } from "@dfine-io-gmbh/dlint";
+import { defineRule, hasDirective, dbRootMethod } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
 // ===========================================================================
 const DRIZZLE_METHODS = ["select", "insert", "update", "delete"] as const;
 // ===========================================================================
-
-function isDbMutation(
-  node: ts.Expression,
-  checker: ts.TypeChecker,
-  dbMethods: readonly string[]
-): boolean {
-  if (!isDbCall(node, checker, dbMethods)) return false;
-  if (ts.isPropertyAccessExpression(node)) {
-    if (node.name.text === "insert" || node.name.text === "update") return true;
-    return isDbMutation(node.expression, checker, dbMethods);
-  }
-  if (ts.isCallExpression(node)) return isDbMutation(node.expression, checker, dbMethods);
-  return false;
-}
 
 function hasReturning(node: ts.Expression): boolean {
   if (ts.isPropertyAccessExpression(node) && node.name.text === "returning")
@@ -43,7 +29,8 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression)) {
-        if (!isDbMutation(node.expression, ctx.checker, drizzleMethods)) return;
+        const method = dbRootMethod(node.expression, ctx.checker, drizzleMethods);
+        if (method !== "insert" && method !== "update") return;
         if (hasReturning(node.expression)) return;
 
         // Only flag if result is consumed (assigned) — void insert/update is intentional
@@ -60,7 +47,6 @@ export default defineRule({
             {
               action: "add-returning",
               pattern: "const [result] = await db.insert(table).values(data).returning();",
-              fix: ctx.insertAfter(node.expression, ".returning()"),
             }
           );
         }

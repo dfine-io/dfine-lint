@@ -40,6 +40,32 @@ export function loopCond(active: boolean) {
   }
 }
 
+// A comparison reads the variable, it does not change it
+export function loopCompare(running: boolean) {
+  while (running) { // EXPECT: safety
+    if (running === false) break;
+  }
+}
+
+// !x reads the variable, it does not change it
+export function loopNegate(running: boolean) {
+  while (running) { // EXPECT: safety
+    if (!running) break;
+  }
+}
+
 // NEGATIVES
+// Written through a shorthand pattern inside the loop
+export function loopShorthand(running: boolean, next: () => { running: boolean }) {
+  while (running) {
+    ({ running } = next());
+  }
+}
+// Written through destructuring inside the loop
+export function loopDestructure(running: boolean, next: () => [boolean]) {
+  while (running) {
+    [running] = next();
+  }
+}
 export const okRadix = parseInt("10", 10);
 export const okMap = arr.map((x) => x + 1);

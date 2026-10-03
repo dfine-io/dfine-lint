@@ -1,7 +1,7 @@
 // Flags require()/dynamic import() with a parameter-derived module specifier (arbitrary module load).
-// Allows static literal specifiers. Self-contained: inlines node-require detection + parameter-taint.
+// Allows static literal specifiers. Self-contained parameter-taint walk; node require via isFromPackage.
 import ts from "typescript";
-import { defineRule, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, isFromPackage } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -42,12 +42,7 @@ export default defineRule({
 
     // `require` must resolve to the Node global typing, not a local binding of the same name.
     function isNodeRequire(id: ts.Identifier): boolean {
-      if (id.text !== "require") return false;
-      const sym = checker.getSymbolAtLocation(id);
-      if (!sym) return false;
-      return (resolveSymbol(checker, sym).declarations ?? []).some((decl) =>
-        decl.getSourceFile().fileName.includes("/@types/node/"),
-      );
+      return id.text === "require" && isFromPackage(id, checker, "node");
     }
 
     ctx.walk((node) => {

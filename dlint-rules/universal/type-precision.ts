@@ -3,7 +3,7 @@
 // redundant typeof, const to satisfies, in to discriminant, mutable to readonly,
 // inline union to named type alias. Precision at the source eliminates downstream guards.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isWriteTarget } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -101,7 +101,6 @@ export default defineRule({
                 action: "use-pick",
                 pattern: `Use Pick<Type, ${pickKeys}> - it states exactly which fields matter`,
                 reference: "https://www.typescriptlang.org/docs/handbook/utility-types.html",
-                fix: ctx.createFix(node.type, `Pick<${typeArgText}, ${pickKeys}>`),
               }
             );
           }
@@ -245,7 +244,6 @@ export default defineRule({
           const inferredType = ctx.checker.getTypeAtLocation(node.initializer);
           // Skip if inferred type is wider than annotated (satisfies would fail)
           if (!ctx.checker.isTypeAssignableTo(inferredType, annotatedType)) return;
-          const typeText = typeNode.getText(ctx.sourceFile);
           ctx.reportAt(
             node.type,
             "Use satisfies instead of type annotation -- preserves tighter inference",
@@ -253,10 +251,6 @@ export default defineRule({
               action: "use-satisfies",
               pattern: "Use satisfies Type instead of : Type - preserves inference",
               reference: "https://www.typescriptlang.org/docs/handbook/utility-types.html",
-              fix: [
-                { start: node.name.getEnd(), length: typeNode.getEnd() - node.name.getEnd(), newText: "" },
-                ctx.insertAfter(node.initializer, " satisfies " + typeText),
-              ],
             }
           );
         }
@@ -293,11 +287,9 @@ export default defineRule({
         const paramType = ctx.checker.getTypeAtLocation(node.name);
         if (ctx.checker.isArrayType(paramType)) {
           const typeNode = node.type;
-          // AST check: readonly T[] = TypeOperatorNode(ReadonlyKeyword), ReadonlyArray<T> = TypeReference
-          const isReadonly = typeNode && (
-            (ts.isTypeOperatorNode(typeNode) && typeNode.operator === ts.SyntaxKind.ReadonlyKeyword) ||
-            isTypeRefNamed(typeNode, "ReadonlyArray")
-          );
+          // Read readonly off the resolved type: the checker already sees through aliases and Readonly<T[]>
+          const arraySymbol = paramType.getSymbol();
+          const isReadonly = !!arraySymbol && isLibDeclaration(arraySymbol) && arraySymbol.getName() === "ReadonlyArray";
           if (typeNode && !isReadonly) {
             const fn = node.parent;
             const body = ts.isFunctionDeclaration(fn) || ts.isArrowFunction(fn) ||
@@ -320,15 +312,12 @@ export default defineRule({
                   mutated = true;
                   return;
                 }
-                // arr[i] = x, arr[i] += x, etc. — element assignment (all assignment operators)
+                // arr[i] = x, arr[i]++, [arr[i]] = xs, delete arr[i]: any element write
                 if (
                   ts.isElementAccessExpression(n) &&
                   ts.isIdentifier(n.expression) &&
                   ctx.checker.getSymbolAtLocation(n.expression) === paramSymbol &&
-                  ts.isBinaryExpression(n.parent) &&
-                  n.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-                  n.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-                  n.parent.left === n
+                  isWriteTarget(n)
                 ) {
                   mutated = true;
                   return;
@@ -336,28 +325,7 @@ export default defineRule({
                 ts.forEachChild(n, scanMutations);
               }
               scanMutations(body);
-              // Guard: skip fix if param is returned (readonly breaks mutable return type)
-              let returned = false;
-              function scanReturns(n: ts.Node): void {
-                if (returned) return;
-                if (ts.isReturnStatement(n) && n.expression && ts.isIdentifier(n.expression) &&
-                    ctx.checker.getSymbolAtLocation(n.expression) === paramSymbol) {
-                  returned = true;
-                  return;
-                }
-                if (!ts.isArrowFunction(n) && !ts.isFunctionExpression(n) && !ts.isFunctionDeclaration(n))
-                  ts.forEachChild(n, scanReturns);
-              }
-              scanReturns(body);
               if (!mutated) {
-                let readonlyFix;
-                if (!returned) {
-                  if (ts.isArrayTypeNode(typeNode)) {
-                    readonlyFix = ctx.insertBefore(typeNode, "readonly ");
-                  } else if (isTypeRefNamed(typeNode, "Array")) {
-                    readonlyFix = ctx.createFix(typeNode.typeName, "ReadonlyArray");
-                  }
-                }
                 ctx.reportAt(
                   node.name,
                   `Mark '${node.name.text}' as readonly T[] -- never mutated in function body`,
@@ -365,7 +333,6 @@ export default defineRule({
                     action: "use-readonly-array",
                     pattern: "Use readonly T[] or ReadonlyArray<T> - never mutated",
                     reference: "https://www.typescriptlang.org/docs/handbook/utility-types.html",
-                    fix: readonlyFix,
                   }
                 );
               }

@@ -1,5 +1,5 @@
 // state-hooks-cluster — >=5 useState (cluster) + >=2 nullable useState in one function.
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export function Cluster() {
   const [a, setA] = useState<string | null>(null); // EXPECT: state-hooks-cluster
@@ -8,6 +8,17 @@ export function Cluster() {
   const [d] = useState(0);
   const [e] = useState(0);
   return { a, b, c, d, e, setA, setB };
+}
+
+// POSITIVE: a boolean state and a ref counter written in one callback
+export function Busy() {
+  const [busy, setBusy] = useState(false); // EXPECT: state-hooks-cluster
+  const count = useRef(0);
+  const start = () => {
+    setBusy(true);
+    count.current++;
+  };
+  return { busy, start };
 }
 
 // NEGATIVE: single state

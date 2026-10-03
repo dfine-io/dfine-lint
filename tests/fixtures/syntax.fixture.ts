@@ -13,6 +13,12 @@ export function useLet() {
 }
 
 export const greeting = "hi " + label; // EXPECT: syntax
+declare const shout: Uppercase<string>;
+export const loud = shout + 1; // EXPECT: syntax
+declare const pick: "a" | "b";
+export const picked = pick + 1; // EXPECT: syntax
+declare const id: `id-${string}`;
+export const idPlus = id + 1; // EXPECT: syntax
 
 export function useApply(fn: (...a: number[]) => void, args: number[]) {
   fn.apply(null, args); // EXPECT: syntax
@@ -25,6 +31,18 @@ export function useApply(fn: (...a: number[]) => void, args: number[]) {
 export const power = Math.pow(2, 8); // EXPECT: syntax
 export const bin = parseInt("1010", 2); // EXPECT: syntax
 export const rx = new RegExp("abc"); // EXPECT: syntax
+
+export function onlyNegated() {
+  let flag = true; // EXPECT: syntax
+  return !flag;
+}
+
+// NEGATIVE: written through destructuring, so it cannot be const
+export function destructured() {
+  let first = 1;
+  [first] = [2];
+  return first;
+}
 
 // NEGATIVES: const, template literal, ** operator, regex literal
 export const okConst = 42;

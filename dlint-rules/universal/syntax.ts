@@ -2,7 +2,7 @@
 // excessive chaining, and overly long expressions.
 // Complex syntax makes code harder to read, debug, and maintain.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isStringType, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -38,13 +38,8 @@ export default defineRule({
           let hasWrite = false;
           function checkWrite(n: ts.Node): void {
             if (hasWrite) return;
-            if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-                n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && ts.isIdentifier(n.left)) {
-              if (ctx.checker.getSymbolAtLocation(n.left) === sym) { hasWrite = true; return; }
-            }
-            if ((ts.isPostfixUnaryExpression(n) || ts.isPrefixUnaryExpression(n)) && ts.isIdentifier(n.operand)) {
-              if (ctx.checker.getSymbolAtLocation(n.operand) === sym) { hasWrite = true; return; }
-            }
+            // Any write counts: plain or compound assignment, ++/--, a destructuring element or a for-in/of head
+            if (ts.isIdentifier(n) && isWriteTarget(n) && valueSymbolOf(n, ctx.checker) === sym) { hasWrite = true; return; }
             ts.forEachChild(n, checkWrite);
           }
           const block = decl.parent?.parent?.parent;
@@ -67,9 +62,7 @@ export default defineRule({
       if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
         const lt = ctx.checker.getTypeAtLocation(node.left);
         const rt = ctx.checker.getTypeAtLocation(node.right);
-        const leftIsStr = !!(lt.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral));
-        const rightIsStr = !!(rt.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral));
-        if (!leftIsStr && !rightIsStr) return;
+        if (!isStringType(lt) && !isStringType(rt)) return;
         if (ts.isStringLiteral(node.left) && ts.isStringLiteral(node.right)) return;
         if (ts.isTemplateExpression(node.parent) || ts.isNoSubstitutionTemplateLiteral(node.parent)) return;
         ctx.reportAt(node, "Use template literal instead of string concatenation", {

@@ -45,8 +45,8 @@ export default defineRule({
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        isDbCall(node, ctx.checker, drizzleMethods) &&
         node.expression.name.text === "execute" &&
+        isDbCall(node, ctx.checker, drizzleMethods) &&
         node.arguments.length > 0
       ) {
         const arg = node.arguments[0];

@@ -2,6 +2,7 @@
 // Used by Code Duplication tab for consumption-overlap analysis and dead export detection
 
 import ts from "typescript";
+import { getExportedFunctions } from "../core/program.js";
 import { defineExtractor } from "../helpers/define-extractor.js";
 import type { FunctionConsumption } from "../types.js";
 
@@ -59,23 +60,6 @@ function hashBody(text: string): string {
   return h.toString(36);
 }
 
-function getExportedFunctionBody(stmt: ts.Statement, sf: ts.SourceFile): { name: string; body: ts.Block; line: number } | undefined {
-  if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-    if (!stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) return undefined;
-    return { name: stmt.name.text, body: stmt.body, line: sf.getLineAndCharacterOfPosition(stmt.getStart()).line + 1 };
-  }
-  if (ts.isVariableStatement(stmt) && stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) {
-    for (const decl of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
-      const init = decl.initializer;
-      if ((ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && init.body && ts.isBlock(init.body)) {
-        return { name: decl.name.text, body: init.body, line: sf.getLineAndCharacterOfPosition(decl.getStart()).line + 1 };
-      }
-    }
-  }
-  return undefined;
-}
-
 export default defineExtractor<FunctionConsumption>({
   id: "function-consumption",
   name: "Function Consumption Analysis",
@@ -83,13 +67,12 @@ export default defineExtractor<FunctionConsumption>({
     const sf = ctx.sourceFile;
     if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) return [];
     const results: FunctionConsumption[] = [];
-    for (const stmt of sf.statements) {
-      const fn = getExportedFunctionBody(stmt, sf);
-      if (!fn || fn.body.statements.length < 3) continue;
+    for (const fn of getExportedFunctions(sf, ctx.checker)) {
+      if (!fn.body || !ts.isBlock(fn.body) || fn.body.statements.length < 3) continue;
       results.push({
-        name: fn.name,
+        name: fn.name.text,
         filePath: sf.fileName,
-        line: fn.line,
+        line: sf.getLineAndCharacterOfPosition(fn.node.getStart(sf)).line + 1,
         callTargets: extractCallTargets(ctx.checker, fn.body),
         dbTables: extractDbTables(ctx.checker, fn.body),
         bodyHash: hashBody(fn.body.getFullText()),
