@@ -21,7 +21,7 @@ So a good fixture contains BOTH:
    prove the rule discriminates (this is where principle 2, "no string heuristics", is
    actually verified).
 
-Example (`tests/fixtures/no-floating-promises.fixture.ts`):
+Example (a simplified sketch; the real `tests/fixtures/no-floating-promises.fixture.ts` differs):
 
 ```typescript
 async function load() {
@@ -37,8 +37,14 @@ await p; // fine - captured then awaited
 
 ## Running
 
+- Run `pnpm build` first - the harness drives `build/cli.js` (or `$DLINT_CLI`), never the source.
 - One rule (fast loop while iterating): `bash tests/run.sh <id>`
 - Whole suite (the gate): `bash tests/run.sh`
+- Check the PASS count of a filtered run - a misspelled id or block name runs 0 checks and exits 0.
+- Filter a block by its block name, which is not always the island folder: `workspace`, `nodup`,
+  `ts7-alias`, `options`, `config-resolve`, `sdk-contract`, `cli-robustness`, `config-guard`,
+  `list-rules`, `rules-tsconfig`, `use-server-island`, `rule-loading`, `git-guard`, `fix-island`,
+  `severity`; the extra blocks below run under their rule id.
 
 Under the hood each fixture is linted with `--rules <id> --files <its path under tests/>` and the
 reported lines are compared to the `EXPECT` markers, counted per line. Exact match = PASS.
@@ -48,7 +54,9 @@ reported lines are compared to the `EXPECT` markers, counted per line. Exact mat
 
 Opinionated rules: `tests/dlint.config.ts` enables the `opinionated` group, so every rule
 loads during testing even though that group ships off for end users. If you add an
-opinionated rule, no test change is needed - it is already covered.
+opinionated rule, no test change is needed - it is already covered. The same config sets
+`rulesDir: "../dlint-rules/universal"`, `include: ["fixtures/**/*.ts"]` and
+`ruleOptions: { "semantic-clone": { minParams: 0 } }`.
 
 Extra blocks in the main test program:
 
@@ -92,7 +100,10 @@ sometimes a `dlint.config.ts`, run from that directory:
   bare `typescript` still resolves dlint's own bundled engine.
 - `tests/list-rules-island/` + `list-rules-length` / `list-rules-nodesc` configs - drive the
   failure branches of `--list-rules`: an over-long description must be reported, and a rule with no
-  description must be skipped and named while the run still exits 0.
+  description must be skipped and named while the run still exits 0. The 120-character limit is the
+  harness's own `LR_CHECK`; dlint itself loads a longer description without complaint.
+- block `rules-tsconfig` - the shipped `tsconfig.rules.json` exists, parses, maps `typescript` to
+  dlint's own copy, and is reachable through both `files` and `exports` of `package.json`.
 - `tests/sdk-contract-island/` + `sdk-contract-island.dlint.config.ts` - a probe rule pins SDK helpers
   no bundled rule exercises (`isInConditionalBranch`, `isLibDeclaration`, `isFromPackage`,
   `valueSymbolOf` on a shorthand default value, the fields of `resolveCallee`, `isTypeFromPackage`,
@@ -130,6 +141,9 @@ island file's `EXPECT` markers.
 A rule change is not done until:
 
 - `bash tests/run.sh` is fully green (the new/changed rule's fixture included), and
-- the broader verification passes (`pnpm build`, `pnpm typecheck`, self-lint `0/0`) - see
-  SKILL.md "Verify". Remember `pnpm typecheck` is the only step that type-checks the rule
-  itself; jiti would otherwise let a type error hide as a silent wrong-value bug.
+- the broader verification passes (`pnpm build`, `pnpm typecheck`, self-lint `0/0`, meaning
+  `pnpm lint:dlint` ends with `0 errors, 0 warnings`) - see SKILL.md "Verify".
+- Inside the dfine-lint repo, `pnpm typecheck` is the only step that type-checks a bundled rule
+  (`tsconfig.typecheck.json` includes `dlint-rules/`); a project rule pack is checked with
+  `npx tsc -p .dlint/tsconfig.json` instead. jiti would otherwise let a type error hide as a
+  silent wrong-value bug.

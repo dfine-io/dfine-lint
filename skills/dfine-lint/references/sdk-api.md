@@ -1,7 +1,7 @@
 # dlint SDK API
 
-Everything a rule can use. All imports come from `@dfine-io-gmbh/dlint` and `typescript`
-only - a rule never imports from another rule.
+Everything a rule can use. Imports come from `@dfine-io-gmbh/dlint`, `typescript` and Node
+built-ins (`node:path`, as several bundled rules do) - a rule never imports from another rule.
 
 ## Table of contents
 
@@ -18,7 +18,8 @@ export default defineRule({
   meta: {
     category: "security" | "performance" | "quality" | "architecture",
     description: string,           // one line, names what it enforces
-    severity?: "error" | "warning",// in-rule default; usually omitted (engine default = error)
+    severity?: "error" | "warning",// usually omitted: then override, group, config.severity, "error"
+                                   // when set, it outranks every group - only an override turns it off
     subChecks?: number,            // count if the rule bundles several checks
   },
   nodeTypes?: ts.SyntaxKind[],     // optional visit filter; empty/omitted = all nodes
@@ -44,11 +45,14 @@ Read-only compiler state:
 Actions:
 
 - `ctx.walk((node: ts.Node) => void)` - visit every node in the current file.
+- `ctx.report({ rule, severity, line, column, message, advisory?, subCheck? })` - the raw
+  diagnostic sink under `reportAt`; the engine replaces `severity` with the configured level.
+  Prefer `reportAt`, which derives `line` and `column` from the node.
 - `ctx.reportAt(node, message, advisory?, subCheck?)` - flag a problem at a node; pass the sub-check id so its `ruleId:subCheckId` settings decide the severity.
 - `ctx.createFix(node, newText)` - replace a node's text.
 - `ctx.insertBefore(node, text)` / `ctx.insertAfter(node, text)` - insert around a node.
 - `ctx.deleteNode(node)` - remove a node; one alone on its lines takes the lines with it, and a statement that is the whole body of an `if` or loop becomes `{}`.
-- `ctx.isSubCheckDisabled(subCheckId: string): boolean` - the sub-check is off in this file, so skip its work (see config ref).
+- `ctx.isSubCheckDisabled(subCheckId: string): boolean` - the sub-check is off in this file, so skip its work (see "Severity precedence" in the config ref).
 - `ctx.options: Record<string, unknown>` - project overrides for this rule's tunable values.
   Always read as `ctx.options.key ?? DEFAULT` so behavior is identical when unset.
 
@@ -60,7 +64,7 @@ Actions:
 {
   action: string,        // short kebab id of the suggested fix, e.g. "add-await"
   pattern: string,       // how to fix it, human-readable
-  reference?: string,    // optional doc URL
+  reference?: string,    // optional doc URL or path; a value without "/" resolves to referencesDir/<value>
   fix?: TextChange | TextChange[],  // optional deterministic autofix
 }
 ```
@@ -79,12 +83,14 @@ copy it between rules.
 Rule/extractor authoring:
 
 - `defineRule(opts)` - create a rule.
-- `defineExtractor(opts)` - create a cross-rule data extractor.
+- `defineExtractor({ id, name, extract, dashboard? })` - create a data extractor for `--extract`;
+  `extract(ctx)` returns an array per file, `ctx` holds `program`, `checker`, `sourceFile`, and
+  the config's `tags` and `directive`. Extractors load from `extractorsDir`.
 
 File / directive / export:
 
 - `hasDirective(sourceFile, "use server" | "use client" | ...)` - file-level directive present?
-- `getExportedFunctions(sourceFile, checker)` -> `ExportedFunction[]` - every function declared and exported in this file, `export { a as b }` lists included; `name` is the local identifier, `func` the function node.
+- `getExportedFunctions(sourceFile, checker)` -> `ExportedFunction[]` - every named function declaration and `const x = () => ...` / function-expression initializer exported from this file, `export { a as b }` lists included; an anonymous default export is not returned. `name` is the local identifier, `func` the function node.
 - `buildReferenceIndex(program, checker)` - cross-file export usage; prefer `ctx.referenceIndex`.
 
 Symbol / type (the anti-heuristic core):
@@ -99,12 +105,12 @@ Symbol / type (the anti-heuristic core):
 - `isProjectSourceFile(sourceFile)` - no `.d.ts` and not inside an installed package; a symlinked workspace package counts as project code.
 - `isNodeModulesDeclaration(symbol)` - declared in `node_modules`.
 - `isNullableType(type)` - includes `null`/`undefined`? A type parameter answers through its constraint.
-- `hasOwnToString(type)` - has its own `toString()` (not `[object Object]`)?
+- `hasOwnToString(type, checker)` - has its own `toString()` (not `[object Object]`)? Arrays, tuples, `Error`, `Date` and `RegExp` count.
 - `isStringType(type)` - a string: `string`, a string or template literal, `Uppercase<T>`-style mappings, or a union of these.
 - `isAssignableTo(checker, source, target)` - structural compatibility.
 - `unwrapPromiseType(type, checker)` - `T` from `Promise<T>`.
 - `isBuiltinCollection(type, checker)` - a lib `Array` / `Map` / `Set` / `WeakMap` / `WeakSet` / `Promise`, readonly forms included.
-- `hasJsDocTag(declaration, "deprecated")` - JSDoc tag present.
+- `hasJsDocTag(symbol, ...tagNames)` - one of the JSDoc tags is present on the symbol, e.g. `hasJsDocTag(sym, "deprecated")`.
 - `isThenable(type, checker)` - has a callable `then`, or a member of its union or intersection does.
 - `isSameReference(a, b, checker)` - two identifiers (by `valueSymbolOf`), property chains, element accesses with the same key, or `this`, that name the same thing; parentheses are skipped.
 
@@ -130,11 +136,14 @@ Cross-file:
 - `collectValueImports(program, sourceFile)` - the specifier literals a file loads at runtime under the program's options: value imports, value re-exports and `import("x")` calls; `literal.parent` is the declaration or call.
 - `isTypeOnlyImport(declaration, compilerOptions)` - an import or re-export that loads nothing at runtime; under `verbatimModuleSyntax` only `import type` / `export type` count.
 
-Result types: `LintResult.timings` (`LintTimings`) holds the phase and per-rule milliseconds of a `--benchmark` run, the shape of the json `timings` field.
+Result types: `LintResult` holds `diagnostics`, `fileCount`, `ruleCount`, `checkCount` (sub-checks
+counted), `errorCount`, `warningCount`, `fixableCount`, `durationMs`, `skippedRules?` (rule files
+that failed to load, with the reason) and `timings?`. `LintResult.timings` (`LintTimings`) holds
+the phase and per-rule milliseconds of a `--benchmark` run, the shape of the json `timings` field.
 
 Clone / similarity:
 
-- `tokenizeFile(sourceFile)` -> `TokenizedBlock[]` - normalized token blocks, cached per source file; treat the result as read-only.
+- `tokenizeFile(sourceFile)` -> `TokenizedBlock[]` - normalized token blocks of every function-like body with at least 5 statements, cached per source file; treat the result as read-only.
 - `tokenSimilarity(a, b)` - bigram set Jaccard; repeats saturate it, use `tokenBagSimilarity`. It goes in 2.0.
 - `tokenBagSimilarity(a, b)` - bigram Jaccard over multisets: a repeated bigram counts each time, not once.
 
@@ -142,6 +151,11 @@ Domain / type shape:
 
 - `collectTypeDeclarations(...)`, `collectFunctionSignatures(...)`, `memberJaccard(...)`,
   `signatureKey(...)` - interface/type discovery and signature fingerprints.
+
+Exported types: `src/index.ts` exports the config, rule, result and extractor types
+(`DlintConfig`, `RuleMeta`, `DefineRuleOptions`, `LintResult`, `ExtractorContext`, `ResolvedCallee`,
+...). `RuleContext`, `EnhancedRuleContext`, `Advisory`, `Diagnostic`, `RuleGroup` and `SkippedRule`
+are not exported from the package.
 
 If a helper you need does not exist, add it to the SDK (`src/helpers/...`) and export it from
 `src/index.ts` - do not inline a one-off heuristic in the rule.

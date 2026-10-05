@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.6
+
+- Added the config keys `extractorsDir`, `baseBranch`, `tags` and `directive` to the bundled skill docs
+- Added every CLI flag and the exit codes to the bundled skill docs
+- Fixed the skill docs where they differed from dlint, e.g. the parameters of `hasJsDocTag` and `hasOwnToString`
+
 ## 1.5.5
 
 - Added SDK helpers `resolveCallee`, `isTypeFromPackage`, `extendsLibType` and `isProjectSourceFile` for custom rules

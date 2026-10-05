@@ -13,11 +13,15 @@ export default {
   bundledRules: true, // load the package's universal rules (default; false to opt out)
   rulesDir: ".dlint/rules", // project rules (a rule pack); same id overrides a bundled rule
   severity: "error", // global default severity
-  include: ["**/*.ts", "**/*.tsx"], // files to scan, exclude's syntax, each pattern with an extension
+  include: ["**/*.ts", "**/*.tsx"], // files to scan, exclude's syntax; at least one pattern needs an extension
   exclude: ["node_modules", ".next", "build"], // also skipped: the root .gitignore and .dlintignore
   tsconfig: "./tsconfig.json",
   maxFileSize: 500_000,
   referencesDir: ".dlint/references",
+  extractorsDir: ".dlint/extractors", // extractor definitions for --extract
+  baseBranch: "origin/main", // what --branch diffs against (default)
+  tags: ["db.select", "^audit.*$"], // calls --extract tags; a plain string matches exactly, ^...$ is a regex
+  directive: "use server", // only functions in files with this directive are tagged
   groups: [
     // toggle whole sets (see below)
     { id: "opinionated", severity: "error" },
@@ -47,15 +51,21 @@ export default {
 ## Severity precedence (most specific wins)
 
 `override` -> `in-rule meta.severity` -> `group` -> `global default`, the first that applies wins.
+So a rule that declares `meta.severity` ignores its group; only an override turns it off. A rule
+skips one sub-check's work through `ctx.isSubCheckDisabled(id)` when these settings make it `off`.
 
 - An override whose `files` match the path beats a global one; the last matching entry wins.
 - A sub-check takes its own `ruleId:subCheckId` override, else `off` when its rule's override is
   `off`, else its group, else its rule's severity: `opinionated` at `warning` makes its sub-checks
   warnings, and a rule override of another severity leaves them to their group.
-- `include` does not narrow a file named with `--files`; when it matches no file of a full scan, the run exits 2.
+- `include` does not narrow a file named with `--files`, but it does filter the files of a
+  directory named there; when it matches no file of a full scan, the run exits 2.
+- A rule id in `overrides` or `groups` may also be the rule's path below its rules dir
+  (`universal/no-local-constants`); the engine maps it to the filename id.
 - A finding whose severity resolves to `off` is dropped; a rule is not run in a file where it and
   every sub-check the config names are off.
-- The engine exits non-zero when `errorCount > 0` (so dlint is a CI gate out of the box);
+- Exit codes: `0` no errors, `1` errors found (so dlint is a CI gate out of the box), `2` a
+  usage or config error, an unknown or disabled `--rules` id, or a file set that cannot resolve.
   `--no-error` reports without failing.
 
 ## groups
@@ -70,8 +80,9 @@ A group bundles rule ids (and `ruleId:subCheckId` members) under one severity.
   ```typescript
   groups: [{ id: "opinionated", severity: "error" }]; // one line turns the whole set on
   ```
-- A user group with the **same id** as a built-in re-sets its severity; a user group with a
-  **new id** brings its own `rules` list - build your own concern bundles:
+- A user group with the **same id** as a built-in re-sets its severity; given a `rules` list as
+  well, that list **replaces** the built-in members instead of adding to them. A user group with
+  a **new id** brings its own `rules` list - build your own concern bundles:
   ```typescript
   groups: [
     { id: "opinionated", severity: "error" },
@@ -87,7 +98,8 @@ A group bundles rule ids (and `ruleId:subCheckId` members) under one severity.
 
 Each tunable rule has a `CONFIG` block of defaults; a project overrides them by rule id.
 The option key is the camelCase of the rule's CONFIG const (`MAX_LINES` -> `maxLines`,
-`CONSTANTS_DIR` -> `constantsDir`, `ALLOWED_PAIRS` -> `allowedPairs`). This is the
+`CONSTANTS_DIR` -> `constantsDir`, `ALLOWED_PAIRS` -> `allowedPairs`); the one exception is
+`safety`, whose `ARRAY_CALLBACK_METHODS_REQUIRING_RETURN` reads `arrayCallbackMethods`. This is the
 single-source override path - the rule's logic stays in the package and improves with
 `pnpm update`. **Never copy a universal rule into `rulesDir` just to change a value** - that
 creates an overlap that silently freezes stale logic. Copy/author a project rule only when
@@ -100,24 +112,34 @@ group or an override; a rule passes that id to `reportAt` so the setting reaches
 ## Shipping a rule pack / plugin
 
 A "plugin" is just a `rulesDir` of `.ts` rule files plus the `dlint.config.ts` that points at
-it. Every `.ts` file in `rulesDir` (subdirs included) becomes a rule; the id is the filename.
+it. Every `.ts` file in `rulesDir` (subdirs included, `.d.ts` skipped) becomes a rule; the id is
+the filename alone, so two files of one name in different subdirs collide and the later one wins.
 A project rule with the same id as a bundled rule **overrides** it - but prefer `ruleOptions`
 over an override-copy (see above). The rules load from source via jiti, so there is no build
 step for the rule pack; it ships and updates as plain `.ts`.
 
-When packaging for reuse across repos: keep each rule self-contained (it may only import from
-`typescript` and `@dfine-io-gmbh/dlint`), put all tunables in a `CONFIG` block read via
+When packaging for reuse across repos: keep each rule self-contained (it imports from
+`typescript`, `@dfine-io-gmbh/dlint` and Node built-ins such as `node:path`, as the bundled
+rules do - never from another rule), put all tunables in a `CONFIG` block read via
 `ctx.options`, and document the option keys. That makes the pack shareable without consumers
 editing rule source.
 
 ## CLI quick reference
 
-- `npx dlint` - full project scan; `--changed` / `--commit` / `--branch` for diffs.
+- `npx dlint init` - scaffold `dlint.config.ts`, `.dlint/rules/` and `.dlint/tsconfig.json`.
+- `npx dlint` - full project scan; `--changed` / `--commit` / `--branch` (vs `baseBranch`) for diffs.
 - `npx dlint --files <path...>` - specific files/dirs.
-- `--rules <id...>` - run only specific rules. (Note: a rule resolved `off` by a group won't
-  load; enable its group or set a severity override to run it explicitly.)
+- `--path <dir>` - project root; loads `<dir>/dlint.config.ts` and beats `--config` as the base.
+- `--rules <id...>` - run only specific rules. A rule resolved `off` by a group won't load, and
+  naming it exits 2 ("Rule(s) turned off in config"); enable its group or set an override first.
 - `--config <file>` - load this config; `rulesDir`/`tsconfig`/scan base resolve relative to it.
-- `--format json|table|compact|html`, `--no-error`.
+- `--format json|table|compact|html` (default `json`), `--no-error`. `html` writes a timestamped
+  `.html` + `.json` pair to `.dlint/report/` and rejects `--fix` - run `--fix` first.
+- `--help` / `-h` - the full flag list with exit codes.
+- `--file-threshold <n>` - at `n` findings or more (default 300) the report goes to a temp file and
+  stdout prints only `dlint: N errors, M warnings (...) -> <path>`; `0` turns this off.
+- `--benchmark` - total, phase and per-rule timing (stderr; in json the `timings` field).
+- `--extract` - extractor data as JSON instead of linting.
 - `--fix` (+ `--dry-run`) - applies only behavior-keeping fixes, then lints again; the summary goes to stderr.
 - `--list-rules` - the loaded rule set as JSON (id + description); no linting, no tsconfig needed.
 
