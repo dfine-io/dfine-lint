@@ -29,7 +29,7 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression)) {
-        const method = dbRootMethod(node.expression, ctx.checker, drizzleMethods);
+        const method = dbRootMethod(node.expression, ctx.checker, drizzleMethods, "drizzle-orm");
         if (method !== "insert" && method !== "update") return;
         if (hasReturning(node.expression)) return;
 

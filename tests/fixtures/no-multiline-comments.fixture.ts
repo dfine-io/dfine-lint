@@ -8,3 +8,10 @@ export const b = 2;
 
 /* regular block comment (not JSDoc) */
 export const c = 3;
+
+// POSITIVE: a JSDoc block after a token on the same line, reported once
+export const d = /** inline */ 4; // EXPECT: no-multiline-comments
+
+// POSITIVE: a statement and its first child share one comment, which counts once
+/** leads a function */
+export function e() {} // EXPECT: no-multiline-comments

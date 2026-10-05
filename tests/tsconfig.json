@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "types": ["node", "react"]
+    "types": ["node", "react"],
+    "paths": { "@fixtures/*": ["./fixtures/*"] }
   },
-  "include": ["fixtures/**/*.ts", "fixtures/**/*.tsx"]
+  "include": ["fixtures/**/*.ts", "fixtures/**/*.tsx", "constants/**/*.ts"]
 }

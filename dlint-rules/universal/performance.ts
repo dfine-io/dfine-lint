@@ -2,7 +2,7 @@
 // unbounded .map()/.filter() chains, and expensive operations in hot paths.
 // These patterns cause O(n^2) or worse degradation at scale.
 import ts from "typescript";
-import { defineRule, isBuiltinCollection, isInsideLoop, isLibDeclaration, isNodeModulesDeclaration, isTypeOnlyImport, resolveImportedModule } from "@dfine-io-gmbh/dlint";
+import { defineRule, extendsLibType, isBuiltinCollection, isInsideLoop, isNodeModulesDeclaration, isTypeOnlyImport, resolveCallee, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -27,25 +27,17 @@ export default defineRule({
     const syncIo = ctx.options.syncIo ? new Set(ctx.options.syncIo as string[]) : SYNC_IO;
     const maxChainDepth = (ctx.options.maxChainDepth as number) ?? MAX_CHAIN_DEPTH;
     ctx.walk((node) => {
-      // regex-in-loop: new RegExp() inside loop
-      if (
-        ts.isNewExpression(node) && ts.isIdentifier(node.expression) &&
-        node.expression.text === "RegExp" && isInsideLoop(node)
-      ) {
-        const regExpSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (regExpSym && isLibDeclaration(regExpSym)) {
-          ctx.reportAt(node, "new RegExp() inside loop — hoist to constant", { action: "hoist-regex", pattern: "const RE = new RegExp(...); for (...) RE.test(...)" });
-        }
+      // regex-in-loop: new RegExp() inside loop, through any alias of the lib's RegExpConstructor
+      if (ts.isNewExpression(node) && isInsideLoop(node) &&
+          extendsLibType(ctx.checker.getTypeAtLocation(node.expression), ctx.checker, ["RegExpConstructor"])) {
+        ctx.reportAt(node, "new RegExp() inside loop — hoist to constant", { action: "hoist-regex", pattern: "const RE = new RegExp(...); for (...) RE.test(...)" });
       }
 
-      // sync-io: readFileSync etc
-      if (
-        ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
-        syncIo.has(node.expression.text)
-      ) {
-        const syncSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (syncSym && isNodeModulesDeclaration(syncSym)) {
-          ctx.reportAt(node, `${node.expression.text}() blocks event loop — use async variant`, { action: "use-async-io", pattern: "await readFile(path) instead of readFileSync(path)" });
+      // sync-io: readFileSync etc. from Node's fs, imported, aliased or reached as fs.readFileSync
+      if (ts.isCallExpression(node)) {
+        const callee = resolveCallee(node, ctx.checker);
+        if (callee?.moduleName === "fs" && syncIo.has(callee.name)) {
+          ctx.reportAt(node, `${callee.name}() blocks event loop — use async variant`, { action: "use-async-io", pattern: "await readFile(path) instead of readFileSync(path)" });
         }
       }
 
@@ -65,7 +57,7 @@ export default defineRule({
           current = current.expression.expression;
         }
         if (depth > maxChainDepth && !isThirdPartyChain) {
-          ctx.reportAt(node, `Method chain depth ${depth} — break into variables`, { action: "break-chain", pattern: "const step1 = a.b(); const step2 = step1.c();" });
+          ctx.reportAt(node, `Method chain depth ${depth} — break into variables`, { action: "break-chain", pattern: "const step1 = a.b(); const step2 = step1.c();" }, "long-chain");
         }
       }
 
@@ -75,6 +67,9 @@ export default defineRule({
       ) {
         const method = node.expression.name.text;
         if (method !== "push" && method !== "unshift" && method !== "splice") return;
+        // queue.push() on a project class is no array mutation
+        const mutatedType = ctx.checker.getTypeAtLocation(node.expression.expression);
+        if (!ctx.checker.isArrayType(mutatedType) && !ctx.checker.isTupleType(mutatedType)) return;
         let current: ts.Node = node;
         while (current.parent) {
           if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
@@ -109,11 +104,14 @@ export default defineRule({
         !offBarrel && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) &&
         !isTypeOnlyImport(node, ctx.program.getCompilerOptions())
       ) {
-        const spec = node.moduleSpecifier.text;
-        if (!spec.startsWith(".")) return;
-        const resolvedPath = resolveImportedModule(ctx.program, node.moduleSpecifier)?.resolvedFileName;
-        if (resolvedPath && /[/\\]index\.[tj]sx?$/.test(resolvedPath)) {
-          ctx.reportAt(node, "Barrel import — import directly from source file for tree-shaking", { action: "direct-import", pattern: "import { x } from './module' instead of './index'" });
+        const resolved = resolveImportedModule(ctx.program, node.moduleSpecifier);
+        if (!resolved || resolved.isExternalLibraryImport) return;
+        const target = ctx.program.getSourceFile(resolved.resolvedFileName);
+        // A barrel only re-exports: every statement is `export … from`, whatever the file is called
+        const isBarrel = !!target && target.statements.length > 0 &&
+          target.statements.every((s) => ts.isExportDeclaration(s) && s.moduleSpecifier !== undefined);
+        if (isBarrel) {
+          ctx.reportAt(node, "Barrel import — import directly from source file for tree-shaking", { action: "direct-import", pattern: "import { x } from './module' instead of './index'" }, "no-barrel-import");
         }
       }
     });

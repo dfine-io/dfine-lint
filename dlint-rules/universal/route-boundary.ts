@@ -49,8 +49,7 @@ export default defineRule({
     const appDir = (ctx.options.appDir as string) ?? APP_DIR;
     const allowedTargets = (ctx.options.allowedTargets as string[]) ?? ALLOWED_TARGETS;
     const allowedPairs = (ctx.options.allowedPairs as [string, string][]) ?? ALLOWED_PAIRS;
-    const projectRoot = ctx.program.getCurrentDirectory();
-    const sourceSegs = getSegments(projectRoot, ctx.sourceFile.fileName);
+    const sourceSegs = getSegments(ctx.projectRoot, ctx.sourceFile.fileName);
     const sourceRoute = getTopLevelRoute(sourceSegs, appDir) ?? "";
     if (!sourceRoute) return;
 
@@ -68,17 +67,18 @@ export default defineRule({
     function checkImport(node: ts.Node, specifier: ts.StringLiteral): void {
       const resolved = resolveImportedModule(ctx.program, specifier);
       if (!resolved) return;
-      const impSegs = getSegments(projectRoot, resolved.resolvedFileName);
+      const impSegs = getSegments(ctx.projectRoot, resolved.resolvedFileName);
       const importRoute = getTopLevelRoute(impSegs, appDir);
       if (!importRoute) return;
       // Same top-level route — always allowed
       if (sourceRoute === importRoute) return;
       if (resolved.isExternalLibraryImport) return;
       const impPath = impSegs.join("/");
-      if (allowedTargets.some(t => impPath.startsWith(t))) return;
-      // Extract bare route names (strip groups) for allowedPairs check
-      const srcName = sourceRoute.split("/").find(s => !isRouteGroup(s));
-      const impName = importRoute.split("/").find(s => !isRouteGroup(s));
+      // "app/styles" (or "app/styles/") allows app/styles/** but not app/stylesheet
+      if (allowedTargets.some((t) => { const base = t.replace(/\/+$/, ""); return impPath === base || impPath.startsWith(base + "/"); })) return;
+      // allowedPairs name plain routes; a route group "(group)" never pairs
+      const srcName = isRouteGroup(sourceRoute) ? undefined : sourceRoute;
+      const impName = isRouteGroup(importRoute) ? undefined : importRoute;
       if (srcName && impName && allowedPairs.some(([s, t]) => s === srcName && t === impName)) return;
       ctx.reportAt(node, `Move cross-route import to lib/ -- ${sourceRoute} must not import from ${importRoute}`, {
         action: "move-to-shared",

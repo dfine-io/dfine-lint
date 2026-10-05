@@ -3,7 +3,7 @@ declare const flag: boolean;
 
 export function dupCondition() {
   if (flag) return 1;
-  else if (flag) return 2; // EXPECT: logic
+  else if (flag) return 2; // EXPECT: logic // EXPECT: logic
   return 0;
 }
 

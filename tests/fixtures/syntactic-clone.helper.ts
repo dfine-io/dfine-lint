@@ -53,6 +53,39 @@ export function accumulateWhile(x: number, y: number) {
   return s;
 }
 
+declare function seed(kind: string): Promise<void>;
+export async function seedProjects() {
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+  await seed("project");
+}
+
+declare function drain(kind: string): Promise<void>;
+export async function drainRarely(done: boolean) {
+  await drain("a");
+  await drain("a");
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  if (done) return;
+  await drain("a");
+}
+
 export function pauseTenClone() {
   debugger;
   debugger;

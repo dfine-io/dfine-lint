@@ -23,6 +23,12 @@ export function good3() {
   makePromise().catch(() => undefined);
 }
 
+// POSITIVE: a logger's promise floats like any other; no name-based exemption
+declare const logger: { info(m: string): Promise<void>; warn(m: string): Promise<void>; error(m: string): Promise<void> };
+export function logs() {
+  logger.info("x"); // EXPECT: no-floating-promises
+}
+
 // NEGATIVE: assigned (stored, not floating)
 export function good4() {
   const p = makePromise();

@@ -2,7 +2,7 @@
 // Useless computed keys, string concat of literals, and redundant .call()/.apply().
 // These patterns compile but add noise — simplify for clarity.
 import ts from "typescript";
-import { defineRule, isSameReference } from "@dfine-io-gmbh/dlint";
+import { defineRule, isSameReference, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -41,7 +41,8 @@ export default defineRule({
 
       // 3. no-useless-call — .call(thisArg) where thisArg is the receiver
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-          (node.expression.name.text === "call" || node.expression.name.text === "apply")) {
+          (node.expression.name.text === "call" || node.expression.name.text === "apply") &&
+          resolveCallee(node, ctx.checker)?.lib) {
         if (!ts.isPropertyAccessExpression(node.expression.expression)) return;
         if (node.arguments.length === 0) return;
         const thisArg = node.arguments[0];

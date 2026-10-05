@@ -1,13 +1,17 @@
 // Every exported Server Action with user-constructible object params must call Zod
-// .safeParse() before business logic. Branded IDs, primitives, and library types
-// (Request, Headers) are not user-constructible.
+// safeParse (or safeParseAsync, validate, validateAsync, as method or z.x) before business logic.
+// Branded IDs, primitives, and library types (Request, Headers) are not user-constructible.
 import ts from "typescript";
 import {
   defineRule,
   hasDirective,
   getExportedFunctions,
   resolveCallBody,
+  resolveCallee,
 } from "@dfine-io-gmbh/dlint";
+
+// The checks that report a failure instead of throwing; validate() and validateAsync() exist from zod 4.5
+const SAFE_PARSE_NAMES = new Set(["safeParse", "safeParseAsync", "validate", "validateAsync"]);
 
 const PRIMITIVE_FLAGS =
   ts.TypeFlags.String |
@@ -97,45 +101,22 @@ function hasUserConstructibleParam(
   });
 }
 
-/** Structural: receiver has parse + safeParse methods (Zod schema shape) */
+// The callee is zod's safeParse, whatever the local name or the receiver's shape
 function isZodSafeParseCall(node: ts.Node, checker: ts.TypeChecker): boolean {
   if (!ts.isCallExpression(node)) return false;
-  if (!ts.isPropertyAccessExpression(node.expression)) return false;
-  if (node.expression.name.text !== "safeParse") return false;
-  const receiverType = checker.getTypeAtLocation(node.expression.expression);
-  return (
-    !!receiverType.getProperty("parse") &&
-    !!receiverType.getProperty("safeParse")
-  );
+  const callee = resolveCallee(node, checker);
+  return callee?.packageName === "zod" && SAFE_PARSE_NAMES.has(callee.name);
 }
 
-function bodyHasSafeParse(body: ts.Node, checker: ts.TypeChecker): boolean {
+// The body runs one of those zod checks, itself or one call deep in a project helper
+function bodyHasSafeParse(body: ts.Node, checker: ts.TypeChecker, delegate = true): boolean {
   let found = false;
   function visit(node: ts.Node): void {
     if (found) return;
-    if (isZodSafeParseCall(node, checker)) {
+    const helper = delegate && ts.isCallExpression(node) ? resolveCallBody(checker, node) : null;
+    if (isZodSafeParseCall(node, checker) || (helper !== null && bodyHasSafeParse(helper, checker, false))) {
       found = true;
       return;
-    }
-    // One-level delegation: called function body contains safeParse
-    if (ts.isCallExpression(node)) {
-      const targetBody = resolveCallBody(checker, node);
-      if (targetBody) {
-        let delegated = false;
-        function scan(n: ts.Node): void {
-          if (delegated) return;
-          if (isZodSafeParseCall(n, checker)) {
-            delegated = true;
-            return;
-          }
-          ts.forEachChild(n, scan);
-        }
-        scan(targetBody);
-        if (delegated) {
-          found = true;
-          return;
-        }
-      }
     }
     ts.forEachChild(node, visit);
   }
@@ -146,7 +127,7 @@ function bodyHasSafeParse(body: ts.Node, checker: ts.TypeChecker): boolean {
 export default defineRule({
   meta: {
     category: "security",
-    description: "Input validation — Zod safeParse on Server Action params",
+    description: "Input validation — Zod safeParse or validate on Server Action params",
   },
   check(ctx) {
     if (!hasDirective(ctx.sourceFile, "use server")) return;
@@ -158,7 +139,7 @@ export default defineRule({
 
       ctx.reportAt(
         fn.name,
-        `Add Zod safeParse to ${fn.name.text} -- params are unsanitized`,
+        `Add Zod safeParse or validate to ${fn.name.text} -- params are unsanitized`,
         {
           action: "add-validation",
           pattern:

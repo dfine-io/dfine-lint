@@ -53,8 +53,8 @@ export default defineRule({
         (left.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken ||
           left.operatorToken.kind ===
             ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
-        (left.right.kind === ts.SyntaxKind.NullKeyword ||
-          (ts.isIdentifier(left.right) && left.right.text === "undefined")) &&
+        // null, undefined, a shadow-proof void 0: the compared side's type is nullish
+        (ctx.checker.getTypeAtLocation(left.right).flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0 &&
         ts.isPropertyAccessExpression(right)
       ) {
         if (ts.isIdentifier(left.left) && ts.isIdentifier(right.expression) && isSameReference(left.left, right.expression, ctx.checker)) {

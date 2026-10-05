@@ -23,6 +23,11 @@ export const okShort = { a };
 export function callOther(other: { fn(x: number): void }) {
   o.fn.call(other, 1);
 }
+// NEGATIVE: a project method named call is not Function.prototype.call
+declare const local: { fn: { call(thisArg: unknown, n: number): void } };
+export function localCall() {
+  local.fn.call(local, 1);
+}
 // NEGATIVE: the computed key defines a plain member where the static one would not
 export const ownProto = { ["__proto__"]: 1 };
 export class Ctor {

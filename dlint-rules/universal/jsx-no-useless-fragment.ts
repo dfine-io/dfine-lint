@@ -9,7 +9,7 @@ export default defineRule({
     description: "No useless JSX fragments wrapping a single child",
   },
   check(ctx) {
-    if (!ctx.sourceFile.fileName.endsWith(".tsx")) return;
+    if (ctx.sourceFile.languageVariant !== ts.LanguageVariant.JSX) return;
     ctx.walk((node) => {
       if (!ts.isJsxFragment(node)) return;
       const children = node.children.filter(

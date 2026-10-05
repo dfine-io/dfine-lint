@@ -1,5 +1,5 @@
 // Flags banned JS syntax patterns: void expressions, labeled statements,
-// lone blocks, multiline string continuations, octal escapes, delete on variables,
+// lone blocks, multiline string continuations, delete on variables,
 // and global variable reassignment.
 import ts from "typescript";
 import { defineRule, isLibDeclaration, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
@@ -16,8 +16,8 @@ function outermostParenthesized(node: ts.Node): ts.Node {
 export default defineRule({
   meta: {
     category: "quality",
-    description: "Banned syntax: void, labels, lone-blocks, multi-str, octal, delete-var, global-assign",
-    subChecks: 7,
+    description: "Banned syntax: void, labels, lone-blocks, multi-str, delete-var, global-assign",
+    subChecks: 6,
   },
   check(ctx) {
     ctx.walk((node) => {
@@ -54,16 +54,6 @@ export default defineRule({
         if (raw.includes("\\\n") || raw.includes("\\\r")) {
           ctx.reportAt(node, "Use template literal for multiline strings", {
             action: "use-template", pattern: "Use a template literal instead of backslash line continuation",
-          });
-        }
-      }
-
-      // no-octal-escape — octal escape sequences in strings
-      if (ts.isStringLiteral(node)) {
-        const raw = node.getText(ctx.sourceFile);
-        if (/\\[1-7]/.test(raw)) {
-          ctx.reportAt(node, "Octal escape sequences are deprecated — use unicode escapes", {
-            action: "use-unicode", pattern: "Use a unicode escape (\\u0041) instead of an octal escape (\\101)",
           });
         }
       }

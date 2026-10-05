@@ -1,9 +1,9 @@
 // Flags child_process exec()/execSync() with a parameter-derived command (command injection).
 // exec/execSync spawn a shell, so a tainted command string is injectable; execFile/spawn with an
 // argument array are intentionally NOT flagged. Allows static command literals.
-// Self-contained: resolves the callee symbol to child_process (alias-proof) + inlines parameter-taint.
+// Self-contained: resolves the callee into Node's child_process module (alias-proof) + inlines parameter-taint.
 import ts from "typescript";
-import { defineRule, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -52,26 +52,13 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (!ts.isCallExpression(node) || node.arguments.length === 0) return;
-      const callee = node.expression;
-      let nameId: ts.Identifier | undefined;
-      if (ts.isIdentifier(callee)) nameId = callee;
-      else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name))
-        nameId = callee.name;
-      if (!nameId) return;
-      // Resolve the callee to its original export — alias-proof, symbol-based (no source-name match).
-      const sym = checker.getSymbolAtLocation(nameId);
-      if (!sym) return;
-      const resolved = resolveSymbol(checker, sym);
-      if (!shellMethods.has(resolved.name)) return;
-      const fromChildProcess = (resolved.declarations ?? []).some((decl) =>
-        /\/@types\/node\/child_process\.d\.ts$/.test(decl.getSourceFile().fileName),
-      );
-      if (!fromChildProcess) return;
+      const callee = resolveCallee(node, checker);
+      if (!callee || callee.moduleName !== "child_process" || !shellMethods.has(callee.name)) return;
       const cmd = node.arguments[0];
       if (!cmd || !tracesToParameter(cmd)) return;
       ctx.reportAt(
         cmd,
-        `Command injection: ${resolved.name}() runs a shell with a parameter-derived command — use execFile()/spawn() with an argument array`,
+        `Command injection: ${callee.name}() runs a shell with a parameter-derived command — use execFile()/spawn() with an argument array`,
         {
           action: "use-execfile-args",
           pattern: "Use execFile(cmd, [arg1, arg2]) -> no shell string interpolation",

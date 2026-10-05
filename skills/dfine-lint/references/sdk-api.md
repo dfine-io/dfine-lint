@@ -39,15 +39,16 @@ Read-only compiler state:
 - `ctx.sourceFile: ts.SourceFile` - the current file's AST.
 - `ctx.referenceIndex` - cross-file export-usage map (which exports are referenced where).
 - `ctx.referencesDir: string` - base dir for advisory reference docs.
+- `ctx.projectRoot: string` - the absolute project root: `--path`, else the config's directory, else the working directory; `program.getCurrentDirectory()` is always the working directory.
 
 Actions:
 
 - `ctx.walk((node: ts.Node) => void)` - visit every node in the current file.
-- `ctx.reportAt(node, message, advisory?)` - flag a problem at a node.
+- `ctx.reportAt(node, message, advisory?, subCheck?)` - flag a problem at a node; pass the sub-check id so its `ruleId:subCheckId` settings decide the severity.
 - `ctx.createFix(node, newText)` - replace a node's text.
 - `ctx.insertBefore(node, text)` / `ctx.insertAfter(node, text)` - insert around a node.
 - `ctx.deleteNode(node)` - remove a node; one alone on its lines takes the lines with it, and a statement that is the whole body of an `if` or loop becomes `{}`.
-- `ctx.isSubCheckDisabled(subCheckId: string): boolean` - gate a sub-check (see config ref).
+- `ctx.isSubCheckDisabled(subCheckId: string): boolean` - the sub-check is off in this file, so skip its work (see config ref).
 - `ctx.options: Record<string, unknown>` - project overrides for this rule's tunable values.
   Always read as `ctx.options.key ?? DEFAULT` so behavior is identical when unset.
 
@@ -88,16 +89,21 @@ File / directive / export:
 
 Symbol / type (the anti-heuristic core):
 
+- `resolveCallee(call, checker)` -> `ResolvedCallee | undefined` - what a call, `new` or tagged template invokes, through aliases and member access, cached per node: `symbol`, declared `name` (a default export reads its declaration's name), `lib`, `packageName` (also from a `declare module` shim), `moduleName` (ambient module such as `"fs"`, `node:` dropped) and `global` (a top-level global of the lib or a package; members and project code are not).
 - `resolveSymbol(checker, symbol)` - follow aliases to the original declaration.
 - `isFromPackage(identifier, checker, "react")` - symbol resolves into that npm package or its ambient `declare module`; a project folder named `react/` does not count.
-- `isLibDeclaration(symbol)` - declared in TypeScript's own `lib.*.d.ts` (e.g. global `RegExp`, `Error`); a project file named `lib.*.d.ts` is not.
+- `isLibDeclaration(symbol)` - one of its declarations sits in TypeScript's own `lib.*.d.ts` (e.g. global `RegExp`, `Error`); a project file named `lib.*.d.ts` is not.
+- `isTypeFromPackage(type, checker, "zod")` - the type, its alias, a union or intersection member, or a base class is declared in that npm package.
+- `extendsLibType(type, checker, ["Error"])` - the type is one of those lib types or derives from one (`class E<T> extends TypeError`).
+- `classOrInterfaceOf(type)` - the class or interface a type instantiates (`Box<string>` reads `Box`), for `checker.getBaseTypes`.
+- `isProjectSourceFile(sourceFile)` - no `.d.ts` and not inside an installed package; a symlinked workspace package counts as project code.
 - `isNodeModulesDeclaration(symbol)` - declared in `node_modules`.
 - `isNullableType(type)` - includes `null`/`undefined`? A type parameter answers through its constraint.
 - `hasOwnToString(type)` - has its own `toString()` (not `[object Object]`)?
 - `isStringType(type)` - a string: `string`, a string or template literal, `Uppercase<T>`-style mappings, or a union of these.
 - `isAssignableTo(checker, source, target)` - structural compatibility.
 - `unwrapPromiseType(type, checker)` - `T` from `Promise<T>`.
-- `isBuiltinCollection(type, checker)` - `Map` / `Set` / `Array`, readonly forms included.
+- `isBuiltinCollection(type, checker)` - a lib `Array` / `Map` / `Set` / `WeakMap` / `WeakSet` / `Promise`, readonly forms included.
 - `hasJsDocTag(declaration, "deprecated")` - JSDoc tag present.
 - `isThenable(type, checker)` - has a callable `then`, or a member of its union or intersection does.
 - `isSameReference(a, b, checker)` - two identifiers (by `valueSymbolOf`), property chains, element accesses with the same key, or `this`, that name the same thing; parentheses are skipped.
@@ -112,14 +118,14 @@ AST position:
 
 Detection:
 
-- `isDbCall(node, checker, methods)` - ORM/DB call on a stored handle (`db`, `this.db`, `ctx.db`), e.g. Drizzle `select/insert/update/delete`; a query builder returned by a call is no handle.
-- `dbRootMethod(node, checker, methods)` - the method called on that handle (`"select"`, `"insert"`, ...), or `null`.
+- `isDbCall(node, checker, methods, packageName?)` - ORM/DB call on a stored handle (`db`, `this.db`, `ctx.db`), e.g. Drizzle `select/insert/update/delete`; a query builder returned by a call is no handle. With `packageName` the handle's type must come from that package.
+- `dbRootMethod(node, checker, methods, packageName?)` - the method called on that handle (`"select"`, `"insert"`, ...), or `null`.
 - `returnTypeHasProperties(...)` - return type carries specific fields.
 
 Cross-file:
 
 - `resolveCallBody(...)` - resolve a function body across file boundaries.
-- `bodyContainsCall(...)` - does a body call a specific function?
+- `bodyContainsCall(...)` - does a body call a name? It matches spellings; walk the body with `resolveCallee` instead. It goes in 2.0.
 - `resolveImportedModule(program, specifier)` - resolve an import specifier literal the way the program does (resolution mode included), cached per program; use it instead of `ts.resolveModuleName`.
 - `collectValueImports(program, sourceFile)` - the specifier literals a file loads at runtime under the program's options: value imports, value re-exports and `import("x")` calls; `literal.parent` is the declaration or call.
 - `isTypeOnlyImport(declaration, compilerOptions)` - an import or re-export that loads nothing at runtime; under `verbatimModuleSyntax` only `import type` / `export type` count.
@@ -129,7 +135,8 @@ Result types: `LintResult.timings` (`LintTimings`) holds the phase and per-rule 
 Clone / similarity:
 
 - `tokenizeFile(sourceFile)` -> `TokenizedBlock[]` - normalized token blocks, cached per source file; treat the result as read-only.
-- `tokenSimilarity(a, b)` - bigram Jaccard between token sequences.
+- `tokenSimilarity(a, b)` - bigram set Jaccard; repeats saturate it, use `tokenBagSimilarity`. It goes in 2.0.
+- `tokenBagSimilarity(a, b)` - bigram Jaccard over multisets: a repeated bigram counts each time, not once.
 
 Domain / type shape:
 
@@ -143,6 +150,25 @@ If a helper you need does not exist, add it to the SDK (`src/helpers/...`) and e
 
 The difference between a shippable rule and a flaky one is almost always here.
 
+Replace each string check with the compiler fact it guesses at:
+
+| String check                                  | Compiler fact                                                  |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| `callee.text === "useEffect"`                 | `resolveCallee(call, checker)` -> `name` + `packageName`       |
+| `fetch`, `setTimeout` or another global name  | `resolveCallee(...)` -> `global` or `lib`                      |
+| module path regex such as `/^(node:)?fs$/`    | `resolveCallee(...)` -> `moduleName === "fs"`                  |
+| receiver has `parse` and `safeParse`          | `isTypeFromPackage(type, checker, "zod")`                      |
+| class name ends in `Error`                    | `extendsLibType(type, checker, ["Error"])`                     |
+| `new RegExp` by identifier                    | `extendsLibType(calleeType, checker, ["RegExpConstructor"])`   |
+| `typeName.text === "Partial"`                 | `checker.getSymbolAtLocation(typeName)` + `isLibDeclaration`   |
+| `typeName.text === "const"`                   | `ts.isConstTypeReference(typeNode)`                            |
+| `fileName.endsWith(".tsx")`                   | `sourceFile.languageVariant === ts.LanguageVariant.JSX`        |
+| `fileName.endsWith(".d.ts")`                  | `sourceFile.isDeclarationFile`                                 |
+| `fileName.includes("node_modules")`           | `isProjectSourceFile(sourceFile)`                              |
+| `fileName.slice(cwd.length + 1)`              | `relative(ctx.projectRoot, fileName)`                          |
+
+- Accept a missed value alias such as `const f = fetch; f(url)` - resolveCallee sees a local variable, and a guessed alias costs false positives.
+
 **Identify an API by its origin, not its name.**
 
 ```typescript
@@ -151,12 +177,9 @@ if (node.expression.text === "cache") {
   /* ... */
 }
 
-// Prefer - resolve the symbol to its package/lib.
-if (
-  ts.isIdentifier(node.expression) &&
-  node.expression.text === "cache" &&
-  isFromPackage(node.expression, ctx.checker, "react")
-) {
+// Prefer - resolve the callee: aliases, `React.cache` and namespace imports included.
+const callee = resolveCallee(node, ctx.checker);
+if (callee?.packageName === "react" && callee.name === "cache") {
   /* ... */
 }
 ```
@@ -186,6 +209,6 @@ if (filePath.includes("/legacy/")) return;
 const ignored = (ctx.options.ignoredDirs as string[]) ?? IGNORED_DIRS;
 ```
 
-**A finding is a codebase bug (G1.1).** When a rule fires on real code, the default is to fix
+**A finding is a codebase bug.** When a rule fires on real code, the default is to fix
 the code, not the rule. Loosen the rule only for a _true_ false positive, and only with a
 generic, type/symbol-based condition - never a per-file or per-name patch.

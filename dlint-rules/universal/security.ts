@@ -2,13 +2,14 @@
 // All sub-checks use TypeChecker for deterministic detection.
 // Secret detection is delegated to environment scanning, not static analysis.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, extendsLibType } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
 // ===========================================================================
 
-const DANGEROUS_URL_SCHEMES = ["javascript:", "data:", "vbscript:"];
+// data: URLs are left out: browsers block navigating to them, and a download link is a common use
+const DANGEROUS_URL_SCHEMES = ["javascript:", "vbscript:"];
 
 // ===========================================================================
 
@@ -70,16 +71,18 @@ export default defineRule({
         }
       }
 
-      // dangerous URL scheme (javascript:/data:/vbscript:)
+      // dangerous URL scheme from the configured list
       if (
         ts.isJsxAttribute(node) && ts.isIdentifier(node.name) &&
         node.name.text === "href" && node.initializer
       ) {
         const checkVal = (v: ts.Expression): void => {
           if (!ts.isStringLiteral(v)) return;
-          const normalized = v.text.trim().toLowerCase();
-          if (dangerousUrlSchemes.some((scheme) => normalized.startsWith(scheme))) {
-            ctx.reportAt(node, "Dangerous URL scheme (javascript:/data:/vbscript:) is an XSS vector", { action: "remove-dangerous-url-scheme", pattern: "Use an https: URL or an onClick handler", reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html" });
+          // The URL parser drops tabs and newlines anywhere and leading control characters: "java\tscript:" runs
+          const normalized = v.text.replace(/[\t\n\r]/g, "").replace(/^[\u0000- ]+/, "").toLowerCase();
+          const scheme = dangerousUrlSchemes.find((s) => normalized.startsWith(s));
+          if (scheme) {
+            ctx.reportAt(node, `Dangerous URL scheme (${scheme}) is an XSS vector`, { action: "remove-dangerous-url-scheme", pattern: "Use an https: URL or an onClick handler", reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html" });
           }
         };
         if (ts.isStringLiteral(node.initializer)) checkVal(node.initializer);
@@ -88,14 +91,9 @@ export default defineRule({
         }
       }
 
-      // document.write
-      if (
-        ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "document" && node.expression.name.text === "write"
-      ) {
-        const docSym = ctx.checker.getSymbolAtLocation(node.expression.expression);
-        if (!docSym || !isLibDeclaration(docSym)) return;
+      // document.write, window.document.write: write() on the lib's Document
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "write" &&
+          extendsLibType(ctx.checker.getTypeAtLocation(node.expression.expression), ctx.checker, ["Document"])) {
         ctx.reportAt(node, "document.write() — use DOM manipulation instead", { action: "use-dom-api", pattern: "Use document.createElement() or el.textContent", reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html" });
       }
     });

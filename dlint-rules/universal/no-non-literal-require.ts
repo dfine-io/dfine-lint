@@ -1,7 +1,7 @@
 // Flags require()/dynamic import() with a parameter-derived module specifier (arbitrary module load).
-// Allows static literal specifiers. Self-contained parameter-taint walk; node require via isFromPackage.
+// Allows static literal specifiers. Self-contained parameter-taint walk; require by its Node Require type.
 import ts from "typescript";
-import { defineRule, isFromPackage } from "@dfine-io-gmbh/dlint";
+import { defineRule, isTypeFromPackage } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -40,11 +40,6 @@ export default defineRule({
       return false;
     }
 
-    // `require` must resolve to the Node global typing, not a local binding of the same name.
-    function isNodeRequire(id: ts.Identifier): boolean {
-      return id.text === "require" && isFromPackage(id, checker, "node");
-    }
-
     ctx.walk((node) => {
       if (!ts.isCallExpression(node) || node.arguments.length === 0) return;
       const spec = node.arguments[0];
@@ -60,7 +55,10 @@ export default defineRule({
         return;
       }
       // require(x)
-      if (ts.isIdentifier(node.expression) && isNodeRequire(node.expression)) {
+      // require or a createRequire() result: typed NodeJS.Require (NodeRequire in older @types/node)
+      const requireType = checker.getTypeAtLocation(node.expression);
+      const requireName = requireType.getSymbol()?.name;
+      if ((requireName === "Require" || requireName === "NodeRequire") && isTypeFromPackage(requireType, checker, "node")) {
         ctx.reportAt(
           spec,
           "require() with a parameter-derived specifier — load only from a fixed allowlist",

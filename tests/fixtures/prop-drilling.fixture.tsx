@@ -244,4 +244,12 @@ export function OneCallbackForwarder({
   return <Wrap p={onA} q={data.b} r={data.c} s={data.d} t={0} />;
 }
 
+// POSITIVE: useful() and user() are no hooks, so this component generates no data and still drills
+declare function useful(): number;
+declare function user(): string;
+export function NotAHookForwarder({ onA, onB, onC, onD }: { onA: () => void; onB: () => void; onC: () => void; onD: () => void }) {
+  void [useful(), user()];
+  return <Wrap p={onA} q={onB} r={onC} s={onD} t={0} />; // EXPECT: prop-drilling@250
+}
+
 void React;

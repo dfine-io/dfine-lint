@@ -28,6 +28,13 @@ export function readonlyArr(items: number[]) { // EXPECT: type-precision
   return items.length;
 }
 
+// NEGATIVE: a project type named Partial is not the lib's Partial
+export function localPartial() {
+  type Partial<X> = { [K in keyof X]?: X[K] } & { tag?: string };
+  const p: Partial<T> = { a: 1 };
+  return p;
+}
+
 // NEGATIVE: an element increment mutates the array
 export function bump(a: number[]) {
   a[0]++;

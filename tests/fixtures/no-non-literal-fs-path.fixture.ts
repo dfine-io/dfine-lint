@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { readFileSync } from "fs";
 import { readFile as readFileP } from "fs/promises";
 import { writeFileSync as wfs } from "fs";
+import { readFileSync as readNodeFs } from "node:fs";
 
 // POSITIVE: namespace import, path directly from a parameter
 export function load(name: string) {
@@ -35,4 +36,15 @@ function readFile2(p: string) {
 }
 export function ok(p: string) {
   return readFile2(p);
+}
+
+// POSITIVE: an aliased import from node:fs resolves to fs as well
+export function readAlias(p: string) {
+  return readNodeFs(p); // EXPECT: no-non-literal-fs-path
+}
+
+// NEGATIVE: a local object shaped like fs is not Node's fs
+const localFs = { readFileSync: (p: string) => p };
+export function readLocal(p: string) {
+  return localFs.readFileSync(p);
 }

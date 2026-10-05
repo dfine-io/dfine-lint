@@ -2,7 +2,7 @@
 // Circular dependencies cause initialization order bugs and undefined imports at runtime.
 // Exempts type-only imports (erased at compile time) and import() calls (they run after initialization).
 import ts from "typescript";
-import { collectValueImports, defineRule, resolveImportedModule } from "@dfine-io-gmbh/dlint";
+import { collectValueImports, defineRule, isProjectSourceFile, resolveImportedModule } from "@dfine-io-gmbh/dlint";
 
 const sccCacheMap = new WeakMap<
   ts.Program,
@@ -18,7 +18,7 @@ function buildImportGraph(program: ts.Program): Map<string, string[]> {
   const graph = new Map<string, string[]>();
 
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     const deps: string[] = [];
     for (const literal of staticValueImports(program, sf)) {
       const resolved = resolveImportedModule(program, literal);

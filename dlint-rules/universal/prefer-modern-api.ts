@@ -1,8 +1,8 @@
 // Suggests modern API replacements: .includes() over .indexOf(),
 // .flatMap() over .map().flat(), .at() over [length-1], .startsWith(),
-// Object.hasOwn(), spread over Object.assign, destructuring over delete.
+// Object.hasOwn(), spread over Object.assign, destructuring over delete, zod validate() over safeParse().success.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isNodeModulesDeclaration, isSameReference, isWriteTarget } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isNodeModulesDeclaration, isSameReference, isWriteTarget, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 const isNegativeOne = (n: ts.Expression): boolean =>
   ts.isPrefixUnaryExpression(n) &&
@@ -11,6 +11,22 @@ const isNegativeOne = (n: ts.Expression): boolean =>
 
 const isZeroLiteral = (n: ts.Expression): boolean =>
   ts.isNumericLiteral(n) && n.text === "0";
+
+// zod's boolean check for each result-object parse: the same validation without building the result
+const ZOD_VALIDATORS = new Map([["safeParse", "validate"], ["safeParseAsync", "validateAsync"]]);
+
+// The call a .success read comes from, through parentheses and await: (await S.safeParseAsync(v)).success
+function successSource(node: ts.PropertyAccessExpression): { call: ts.CallExpression; receiver: ts.Expression; awaited: boolean } | undefined {
+  let inner: ts.Expression = node.expression;
+  let awaited = false;
+  while (ts.isParenthesizedExpression(inner) || ts.isAwaitExpression(inner)) {
+    awaited ||= ts.isAwaitExpression(inner);
+    inner = inner.expression;
+  }
+  return ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression)
+    ? { call: inner, receiver: inner.expression.expression, awaited }
+    : undefined;
+}
 
 // The lib-declared member a receiver's type offers, so a suggestion only names an API that exists there
 function libMember(checker: ts.TypeChecker, receiver: ts.Expression, name: string): ts.Symbol | undefined {
@@ -21,16 +37,33 @@ function libMember(checker: ts.TypeChecker, receiver: ts.Expression, name: strin
 export default defineRule({
   meta: {
     category: "quality",
-    description: "Modern API: includes, flatMap, at, startsWith, hasOwn, no-delete, no-assign",
-    subChecks: 7,
+    description: "Modern API: includes, flatMap, at, startsWith, hasOwn, no-delete, no-assign, zod validate",
+    subChecks: 8,
   },
   check(ctx) {
+    const offZodValidate = ctx.isSubCheckDisabled("zod-validate");
     ctx.walk((node) => {
+      // zod-validate: S.safeParse(v).success → S.validate(v), only where the installed zod offers it (4.5+)
+      if (!offZodValidate && ts.isPropertyAccessExpression(node) && node.name.text === "success") {
+        const source = successSource(node);
+        const callee = source && resolveCallee(source.call, ctx.checker);
+        const validator = callee?.packageName === "zod" ? ZOD_VALIDATORS.get(callee.name) : undefined;
+        // safeParse is read directly, safeParseAsync only after its await
+        if (source && callee && validator && (callee.name === "safeParseAsync") === source.awaited &&
+            ctx.checker.getTypeAtLocation(source.receiver).getProperty(validator)) {
+          ctx.reportAt(node, `Use ${validator}() -- ${callee.name} builds a result object only for .success to be read`, {
+            action: "use-zod-validate",
+            pattern: `${source.awaited ? "await " : ""}${source.receiver.getText()}.${validator}(...)`,
+          }, "zod-validate");
+        }
+      }
+
       // prefer-includes: .indexOf(x) !== -1 → .includes(x)
       if (
         ts.isBinaryExpression(node) &&
         ts.isCallExpression(node.left) && ts.isPropertyAccessExpression(node.left.expression) &&
-        node.left.expression.name.text === "indexOf"
+        node.left.expression.name.text === "indexOf" &&
+        !!libMember(ctx.checker, node.left.expression.expression, "includes")
       ) {
         const indexOfSym = ctx.checker.getSymbolAtLocation(node.left.expression.name);
         if (!indexOfSym || (!isLibDeclaration(indexOfSym) && !isNodeModulesDeclaration(indexOfSym))) return;
@@ -80,6 +113,7 @@ export default defineRule({
         if (!isVerified(flatSym) || !isVerified(mapSym)) return;
         const mapCall = (node.expression as ts.PropertyAccessExpression).expression as ts.CallExpression;
         const mapProp = mapCall.expression as ts.PropertyAccessExpression;
+        if (!libMember(ctx.checker, mapProp.expression, "flatMap")) return;
         const fmReceiver = mapProp.expression.getText(ctx.sourceFile);
         // flatMap takes the same callback and thisArg as map
         const fmArgs = mapCall.arguments.map((a) => a.getText(ctx.sourceFile)).join(", ");

@@ -21,17 +21,34 @@ export const asyncExec = new Promise(async (resolve) => { // EXPECT: safety
   resolve(1);
 });
 
-// reject-non-error + atomic-updates subchecks omitted: not triggered in the isolated
-// test program (executor-param / outer-scope resolution differs). Covered vs real code.
+// An expression-bodied async executor is async all the same
+export const asyncExprExec = new Promise(async (resolve) => resolve(1)); // EXPECT: safety
+
+// reject-non-error: the executor's second parameter, whatever it is called
 export const rejectStr = new Promise((resolve, reject) => {
-  reject("oops");
+  reject("oops"); // EXPECT: safety
+});
+// A `this` parameter is a type annotation, not a position: fail is still the second parameter
+export const rejectThis = new Promise(function (this: void, resolve, fail) {
+  fail("oops"); // EXPECT: safety
 });
 
 export const unsafeChain = maybe?.v + 1; // EXPECT: safety
 
+// require-atomic-updates: an outer variable read before the await and written after it
 let shared = 0;
 export async function race() {
-  shared = await Promise.resolve(1);
+  shared = shared + (await Promise.resolve(1)); // EXPECT: safety
+}
+export async function raceCompound() {
+  shared += await Promise.resolve(1); // EXPECT: safety
+}
+export async function raceArgument(next: (n: number) => Promise<number>) {
+  shared = await next(shared); // EXPECT: safety
+}
+// The read sits between two awaits: the second one still pauses before the write
+export async function raceSecondAwait(next: (n: number) => Promise<number>) {
+  shared = (await next(0)) + (await next(shared)); // EXPECT: safety
 }
 
 export function loopCond(active: boolean) {
@@ -66,6 +83,24 @@ export function loopDestructure(running: boolean, next: () => [boolean]) {
   while (running) {
     [running] = next();
   }
+}
+// A plain write reads nothing that could be stale
+export async function plainWrite() {
+  shared = await Promise.resolve(1);
+}
+// A read after the await sees the current value
+export async function readAfterAwait() {
+  shared = (await Promise.resolve(1)) + shared;
+}
+// A local variable is not shared with a concurrent call
+export async function localUpdate() {
+  let total = 0;
+  total += await Promise.resolve(1);
+  return total;
+}
+// An await inside a nested function does not pause the assignment
+export function nestedAwait(run: (task: () => Promise<number>) => number) {
+  shared = shared + run(async () => await Promise.resolve(1));
 }
 export const okRadix = parseInt("10", 10);
 export const okMap = arr.map((x) => x + 1);

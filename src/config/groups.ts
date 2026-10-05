@@ -56,37 +56,20 @@ const BUILTIN_GROUPS: RuleGroup[] = [
       "no-implicit-coercion:plus-coercion",
       "no-implicit-coercion:string-concat",
       "no-implicit-coercion:double-negation",
+      "prefer-modern-api:zod-validate",
     ],
   },
 ];
 
-/**
- * Merge the built-in groups with the user's config groups (a user entry overrides the
- * built-in severity by id; an absent `rules` keeps the built-in membership) and flatten
- * into per-rule severities and the set of globally-disabled sub-checks.
- */
-export function resolveGroups(userGroups: readonly RuleGroup[] = []): {
-  /** Effective severity per whole-rule group member (plain rule id). */
-  ruleSeverity: Map<string, Severity | "off">;
-  /** "ruleId:subCheckId" members whose effective group severity is "off". */
-  disabledSubChecks: Set<string>;
-} {
+// Merge the built-in groups with the user's (a user entry re-sets a built-in severity by id; an absent `rules` keeps
+// the built-in members) into one severity per member, a plain rule id or "ruleId:subCheckId"
+export function resolveGroups(userGroups: readonly RuleGroup[] = []): Map<string, Severity | "off"> {
   const merged = new Map<string, RuleGroup>();
   for (const g of [...BUILTIN_GROUPS, ...userGroups]) {
     const prev = merged.get(g.id);
     merged.set(g.id, { id: g.id, severity: g.severity, rules: g.rules ?? prev?.rules ?? [] });
   }
-
-  const ruleSeverity = new Map<string, Severity | "off">();
-  const disabledSubChecks = new Set<string>();
-  for (const g of merged.values()) {
-    for (const member of g.rules ?? []) {
-      if (member.includes(":")) {
-        if (g.severity === "off") disabledSubChecks.add(member);
-      } else {
-        ruleSeverity.set(member, g.severity);
-      }
-    }
-  }
-  return { ruleSeverity, disabledSubChecks };
+  const severity = new Map<string, Severity | "off">();
+  for (const g of merged.values()) for (const member of g.rules ?? []) severity.set(member, g.severity);
+  return severity;
 }

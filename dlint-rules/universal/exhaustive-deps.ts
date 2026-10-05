@@ -3,10 +3,8 @@
 import ts from "typescript";
 import {
   defineRule,
-  isNodeModulesDeclaration,
-  isFromPackage,
+  resolveCallee,
   resolveSymbol,
-  unwrapPromiseType,
   valueSymbolOf,
 } from "@dfine-io-gmbh/dlint";
 
@@ -15,7 +13,7 @@ import {
 // ===========================================================================
 const HOOKS_WITH_DEPS = new Set(["useEffect", "useCallback", "useMemo"]);
 
-// Hooks whose 2nd destructured element is identity-stable per React guarantees
+// Hooks whose 2nd destructured element is identity-stable per React guarantees (same list as react.ts STATE_HOOKS)
 const STABLE_SETTER_HOOKS = new Set([
   "useState",
   "useReducer",
@@ -40,13 +38,11 @@ function isStableHookValue(
     if (
       ts.isVariableDeclaration(varDecl) &&
       varDecl.initializer &&
-      ts.isCallExpression(varDecl.initializer) &&
-      ts.isIdentifier(varDecl.initializer.expression)
+      ts.isCallExpression(varDecl.initializer)
     ) {
-      const callee = varDecl.initializer.expression;
-      /* TC: verify hook is from React package */
-      if (isFromPackage(callee, checker, "react") && index === 1) {
-        return stableSetterHooks.has(callee.text);
+      const callee = resolveCallee(varDecl.initializer, checker);
+      if (callee?.packageName === "react" && index === 1) {
+        return stableSetterHooks.has(callee.name);
       }
     }
   }
@@ -55,12 +51,11 @@ function isStableHookValue(
   if (
     ts.isVariableDeclaration(decl) &&
     decl.initializer &&
-    ts.isCallExpression(decl.initializer) &&
-    ts.isIdentifier(decl.initializer.expression)
+    ts.isCallExpression(decl.initializer)
   ) {
-    const callee = decl.initializer.expression;
-    if (isFromPackage(callee, checker, "react")) {
-      return stableValueHooks.has(callee.text);
+    const callee = resolveCallee(decl.initializer, checker);
+    if (callee?.packageName === "react") {
+      return stableValueHooks.has(callee.name);
     }
   }
 
@@ -84,74 +79,23 @@ function isStableHookValue(
   return false;
 }
 
-function isSelfReference(
-  identifier: ts.Identifier,
-  callback: ts.Node,
-): boolean {
-  // Check if the identifier refers to the variable that the useCallback is assigned to
-  // Pattern: const fn = useCallback(() => { fn(); }, [])
+// const fn = useCallback(() => { fn(); }, []): the callback reads the variable it is assigned to
+function isSelfReference(valueDecl: ts.Node, callback: ts.Node): boolean {
   let parent = callback.parent;
   if (ts.isCallExpression(parent)) parent = parent.parent;
-  if (
-    ts.isVariableDeclaration(parent) &&
-    ts.isIdentifier(parent.name) &&
-    parent.name.text === identifier.text
-  ) {
-    return true;
-  }
-  return false;
+  return valueDecl === parent;
 }
 
-function isJsxReturnType(type: ts.Type, checker: ts.TypeChecker): boolean {
-  const unwrapped = unwrapPromiseType(type, checker);
-  if (unwrapped.isUnion()) {
-    return unwrapped.types.some(t => isJsxReturnType(t, checker));
-  }
-  if (unwrapped.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
-    return false;
-  }
-  const props = unwrapped.getProperties();
-  return props.some(p => p.name === "type") &&
-    props.some(p => p.name === "props") &&
-    props.some(p => p.name === "key");
-}
-
-function bodyCallsReactHook(
-  fn: ts.FunctionLikeDeclaration,
-  checker: ts.TypeChecker,
-): boolean {
-  if (!fn.body) return false;
-  let found = false;
-  function visit(n: ts.Node): void {
-    if (found) return;
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
-      if (isFromPackage(n.expression, checker, "react")) { found = true; return; }
-    }
-    if (!ts.isArrowFunction(n) && !ts.isFunctionExpression(n))
-      ts.forEachChild(n, visit);
-  }
-  ts.forEachChild(fn.body, visit);
-  return found;
-}
-
-function getComponentBoundary(
-  node: ts.Node,
-  checker: ts.TypeChecker,
-): ts.FunctionLikeDeclaration | undefined {
+// The function the hook runs in: a component or hook, an expression-bodied one (x => useMemo(...)) included
+function getComponentBoundary(node: ts.Node): ts.FunctionLikeDeclaration | undefined {
   let current = node.parent;
   while (current) {
     if (
       ts.isFunctionDeclaration(current) ||
       ts.isArrowFunction(current) ||
       ts.isFunctionExpression(current)
-    ) {
-      const sig = checker.getSignatureFromDeclaration(current);
-      if (sig) {
-        const returnType = checker.getReturnTypeOfSignature(sig);
-        if (isJsxReturnType(returnType, checker)) return current;
-      }
-      if (bodyCallsReactHook(current, checker)) return current;
-    }
+    )
+      return current;
     current = current.parent;
   }
   return undefined;
@@ -220,12 +164,6 @@ function collectCallbackDeps(
       }
       const resolved = resolveSymbol(checker, sym);
 
-      /* Skip: lib or node_modules declarations (imports, globals) */
-      if (isNodeModulesDeclaration(resolved)) {
-        ts.forEachChild(n, visit);
-        return;
-      }
-
       const valueDecl =
         resolved.valueDeclaration ?? resolved.declarations?.[0];
       if (!valueDecl) {
@@ -246,7 +184,7 @@ function collectCallbackDeps(
       }
 
       /* Skip self-reference (const fn = useCallback(() => fn(), [])) */
-      if (isSelfReference(n, callback)) {
+      if (isSelfReference(valueDecl, callback)) {
         ts.forEachChild(n, visit);
         return;
       }
@@ -288,20 +226,11 @@ export default defineRule({
     const stableSetterHooks = ctx.options.stableSetterHooks ? new Set(ctx.options.stableSetterHooks as string[]) : STABLE_SETTER_HOOKS;
     const stableValueHooks = ctx.options.stableValueHooks ? new Set(ctx.options.stableValueHooks as string[]) : STABLE_VALUE_HOOKS;
 
-    if (
-      !ctx.sourceFile.fileName.endsWith(".tsx") &&
-      !ctx.sourceFile.fileName.endsWith(".ts")
-    )
-      return;
-
     ctx.walk((node) => {
-      if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression))
-        return;
-      const hookName = node.expression.text;
-      if (!hooksWithDeps.has(hookName)) return;
-
-      /* TC: verify hook is from React */
-      if (!isFromPackage(node.expression, ctx.checker, "react")) return;
+      if (!ts.isCallExpression(node)) return;
+      const hook = resolveCallee(node, ctx.checker);
+      if (hook?.packageName !== "react" || !hooksWithDeps.has(hook.name)) return;
+      const hookName = hook.name;
 
       const callback = node.arguments[0];
       if (
@@ -313,7 +242,7 @@ export default defineRule({
       const depsArg = node.arguments[1];
       if (!depsArg || !ts.isArrayLiteralExpression(depsArg)) return;
 
-      const componentFn = getComponentBoundary(node, ctx.checker);
+      const componentFn = getComponentBoundary(node);
       if (!componentFn) return;
 
       const actualDeps = collectCallbackDeps(

@@ -130,7 +130,7 @@ export default defineRule({
     description: "Plain-string === literal -- narrow source to literal union or branded type",
   },
   check(ctx) {
-    if (ctx.sourceFile.fileName.endsWith(".d.ts")) return;
+    if (ctx.sourceFile.isDeclarationFile) return;
 
     ctx.walk((node) => {
       if (!ts.isBinaryExpression(node)) return;

@@ -1,41 +1,14 @@
 // Prevents `any` type from spreading through assignments, returns, and property access.
 // Flags variable assignment from any-typed expression, untyped returns, and any-typed calls.
-// Exempts JSON.parse, catch variables, dynamic imports, and third-party calls.
+// Exempts catch variables, dynamic imports, and calls on lib or third-party receivers (JSON.parse, Reflect.get).
 // Unchecked any propagation silently disables type safety across the entire call chain.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
-
-function isGlobalSymbol(id: ts.Identifier, checker: ts.TypeChecker): boolean {
-  const sym = checker.getSymbolAtLocation(id);
-  return !!sym && isLibDeclaration(sym);
-}
-
-function isJsonParse(node: ts.Expression, checker: ts.TypeChecker): boolean {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "JSON" &&
-    node.expression.name.text === "parse" &&
-    isGlobalSymbol(node.expression.expression, checker)
-  );
-}
+import { defineRule, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
 
 function isDynamicImport(node: ts.Expression): boolean {
   return (
     ts.isCallExpression(node) &&
     node.expression.kind === ts.SyntaxKind.ImportKeyword
-  );
-}
-
-function isReflectGet(node: ts.Expression, checker: ts.TypeChecker): boolean {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "Reflect" &&
-    node.expression.name.text === "get" &&
-    isGlobalSymbol(node.expression.expression, checker)
   );
 }
 
@@ -62,6 +35,7 @@ export default defineRule({
       if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
       const objType = ctx.checker.getTypeAtLocation(node.expression.expression);
       const sym = objType.symbol ?? objType.aliasSymbol;
+      // Third-party receivers return any by design; the TS lib (JSON, Reflect) sits under node_modules too
       return !!sym && isNodeModulesDeclaration(sym);
     }
 
@@ -77,8 +51,6 @@ export default defineRule({
       if (
         ts.isVariableDeclaration(node) &&
         node.initializer &&
-        !isJsonParse(node.initializer, ctx.checker) &&
-        !isReflectGet(node.initializer, ctx.checker) &&
         !isThirdPartyCall(node.initializer) &&
         !isCatchVariable(node.initializer) &&
         isAnyType(node.initializer)

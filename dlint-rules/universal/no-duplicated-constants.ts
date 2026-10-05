@@ -1,7 +1,8 @@
 // Detects local constant declarations that duplicate exports from */constants/* directories.
 // Cross-file: matches local const name against central export leaf names with same value.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { relative, sep } from "node:path";
+import { defineRule, isProjectSourceFile } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -61,17 +62,23 @@ function collectExportValues(
   }
 }
 
+// Project-relative path with forward slashes, the form messages show
+function projectPath(projectRoot: string, fileName: string): string {
+  return relative(projectRoot, fileName).split(sep).join("/");
+}
+
 function buildCentralMap(
   program: ts.Program,
   checker: ts.TypeChecker,
   constantsDir: string,
+  projectRoot: string,
 ): ReadonlyMap<string | number, readonly CentralConstant[]> {
-  const projectRoot = program.getCurrentDirectory();
   const map = new Map<string | number, CentralConstant[]>();
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
-    const relativePath = sf.fileName.slice(projectRoot.length + 1);
-    if (!relativePath.includes(constantsDir)) continue;
+    if (!isProjectSourceFile(sf)) continue;
+    const relativePath = projectPath(projectRoot, sf.fileName);
+    // The leading slash lets a constants/ directory at the project root match like a nested one
+    if (!("/" + relativePath).includes(constantsDir)) continue;
     const moduleSymbol = checker.getSymbolAtLocation(sf);
     if (!moduleSymbol) continue;
     for (const exportSymbol of checker.getExportsOfModule(moduleSymbol)) {
@@ -89,15 +96,14 @@ export default defineRule({
     description: "Local constants duplicating exports from central */constants/* files",
   },
   check(ctx) {
-    const constantsDir = (ctx.options.constantsDir as string) ?? CONSTANTS_DIR;
+    const option = ctx.options.constantsDir;
+    const constantsDir = typeof option === "string" ? option : CONSTANTS_DIR;
     let centralMap = centralConstantsCache.get(ctx.program);
     if (!centralMap) {
-      centralMap = buildCentralMap(ctx.program, ctx.checker, constantsDir);
+      centralMap = buildCentralMap(ctx.program, ctx.checker, constantsDir, ctx.projectRoot);
       centralConstantsCache.set(ctx.program, centralMap);
     }
-    const projectRoot = ctx.program.getCurrentDirectory();
-    const relativePath = ctx.sourceFile.fileName.slice(projectRoot.length + 1);
-    if (relativePath.includes(constantsDir)) return;
+    if (("/" + projectPath(ctx.projectRoot, ctx.sourceFile.fileName)).includes(constantsDir)) return;
 
     ctx.walk((node) => {
       if (!ts.isVariableDeclaration(node) || !node.initializer || !ts.isIdentifier(node.name)) return;

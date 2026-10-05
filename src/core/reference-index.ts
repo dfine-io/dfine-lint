@@ -6,6 +6,7 @@
 // Consumed by rules via ctx.referenceIndex for dead export detection.
 import ts from "typescript";
 import type { ReferenceIndex } from "../types.js";
+import { isProjectSourceFile, packageOfFile, resolveSymbol } from "../helpers/ast.js";
 
 function addRef(index: Map<string, Set<string>>, fileName: string, name: string): void {
   let refs = index.get(fileName);
@@ -23,13 +24,11 @@ export function buildReferenceIndex(
   // A symbol re-exported from N files appears N times in the array.
   const symbolToExports = new Map<ts.Symbol, { fileName: string; name: string }[]>();
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     const moduleSym = checker.getSymbolAtLocation(sf);
     if (!moduleSym) continue;
     for (const exp of checker.getExportsOfModule(moduleSym)) {
-      const resolved = exp.flags & ts.SymbolFlags.Alias
-        ? checker.getAliasedSymbol(exp)
-        : exp;
+      const resolved = resolveSymbol(checker, exp);
       let entries = symbolToExports.get(resolved);
       if (!entries) { entries = []; symbolToExports.set(resolved, entries); }
       entries.push({ fileName: sf.fileName, name: exp.name });
@@ -38,15 +37,12 @@ export function buildReferenceIndex(
 
   // Phase 2: Walk all identifiers, resolve to symbols, mark all export sites
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     function walk(node: ts.Node): void {
       if (ts.isIdentifier(node)) {
         const sym = checker.getSymbolAtLocation(node);
         if (sym) {
-          const resolved = sym.flags & ts.SymbolFlags.Alias
-            ? checker.getAliasedSymbol(sym)
-            : sym;
-          const entries = symbolToExports.get(resolved);
+          const entries = symbolToExports.get(resolveSymbol(checker, sym));
           if (entries) {
             for (const { fileName, name } of entries) {
               if (fileName !== sf.fileName) addRef(index, fileName, name);
@@ -60,9 +56,8 @@ export function buildReferenceIndex(
         if (specifier && ts.isStringLiteral(specifier)) {
           const moduleSym = checker.getSymbolAtLocation(specifier);
           if (moduleSym) {
-            const decl = moduleSym.valueDeclaration ?? moduleSym.declarations?.[0];
-            if (decl && !decl.getSourceFile().fileName.includes("node_modules")) {
-              const fileName = decl.getSourceFile().fileName;
+            const fileName = (moduleSym.valueDeclaration ?? moduleSym.declarations?.[0])?.getSourceFile().fileName;
+            if (fileName !== undefined && packageOfFile(fileName) === undefined) {
               for (const exp of checker.getExportsOfModule(moduleSym)) addRef(index, fileName, exp.name);
             }
           }

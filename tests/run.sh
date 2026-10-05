@@ -7,27 +7,27 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
-CLI="$ROOT/build/cli.js"
+CLI="${DLINT_CLI:-$ROOT/build/cli.js}"
 ONLY="${1:-}"
 
 pass=0; fail=0; failed=""
 
-# Lines a file marks with `// EXPECT: <rule>` (or `@<line>`), sorted and unique.
+# Lines a file marks with `// EXPECT: <rule>` (or `@<line>`), sorted; one entry per marker, so two
+# findings on one line need two markers.
 expected_lines() {
   python3 -c '
 import sys, re
 exp = []
 for i, line in enumerate(open(sys.argv[1]), 1):
-    m = re.search(r"//\s*EXPECT:\s*[a-z][a-z0-9-]*(?:@(\d+))?", line)
-    if m:
+    for m in re.finditer(r"//\s*EXPECT:\s*[a-z][a-z0-9-]*(?:@(\d+))?", line):
         exp.append(int(m.group(1)) if m.group(1) else i)
-print(" ".join(str(x) for x in sorted(set(exp))))
+print(" ".join(str(x) for x in sorted(exp)))
 ' "$1"
 }
 
-# Finding lines of a dlint JSON report on stdin, sorted and unique.
+# Finding lines of a dlint JSON report on stdin, sorted; a line reported twice appears twice.
 finding_lines() {
-  python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(l) for l in sorted(set(x['line'] for x in d.get('diagnostics',[])))))" 2>/dev/null | xargs
+  python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(l) for l in sorted(x['line'] for x in d.get('diagnostics',[]))))" 2>/dev/null | xargs
 }
 
 # verdict <name> <expected> <actual>: count and print one check.
@@ -48,12 +48,14 @@ island_check() {
   verdict "$1" "$(expected_lines "$DIR/$3")" "$actual"
 }
 
-for fx in "$DIR"/fixtures/*.fixture.ts "$DIR"/fixtures/*.fixture.tsx; do
+# fixtures/variants/ holds a rule's second fixture in the other extension: beside x.fixture.tsx, an
+# x.fixture.ts in the same folder would push the .tsx out of the program
+for fx in "$DIR"/fixtures/*.fixture.ts "$DIR"/fixtures/*.fixture.tsx "$DIR"/fixtures/variants/*.fixture.ts "$DIR"/fixtures/variants/*.fixture.tsx; do
   [ -e "$fx" ] || continue
   base="$(basename "$fx")"
   rule="${base%.fixture.ts}"; rule="${rule%.fixture.tsx}"
   [ -n "$ONLY" ] && [ "$ONLY" != "$rule" ] && continue
-  actual="$(node "$CLI" --path "$DIR" --rules "$rule" --files "fixtures/$base" --format json --no-error 2>/dev/null | finding_lines)"
+  actual="$(node "$CLI" --path "$DIR" --rules "$rule" --files "${fx#"$DIR"/}" --format json --no-error 2>/dev/null | finding_lines)"
   verdict "$rule" "$(expected_lines "$fx")" "$actual"
 done
 
@@ -76,13 +78,105 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "unused-export" ]; then
 fi
 
 # route-boundary needs an app/<route>/ layout: the rule keys off path segments relative to the
-# program root (getCurrentDirectory = process.cwd()), so its fixture lives in a dedicated island
-# and runs from that dir. Not expressible in the flat fixtures/ harness.
+# project root (--path), so its fixture lives in a dedicated island. It runs twice: from inside the
+# island, and from the repo root with --path, where the working directory is not the project root.
 RB_ISLAND="$DIR/route-boundary-island"
 RB_FILE="app/dashboard/importer.ts"
 if [ -f "$RB_ISLAND/$RB_FILE" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "route-boundary" ]; }; then
   actual="$( (cd "$RB_ISLAND" && node "$CLI" --path . --rules route-boundary --files "$RB_FILE" --format json --no-error 2>/dev/null) | finding_lines)"
   verdict route-boundary "$(expected_lines "$RB_ISLAND/$RB_FILE")" "$actual"
+  actual="$( (cd "$ROOT" && node "$CLI" --path "$RB_ISLAND" --rules route-boundary --files "$RB_FILE" --format json --no-error 2>/dev/null) | finding_lines)"
+  verdict route-boundary:path "$(expected_lines "$RB_ISLAND/$RB_FILE")" "$actual"
+fi
+
+# Root constants/: a constants/ directory at the project root counts like a nested one, so its own
+# constants are no no-local-constants finding (no-duplicated-constants reads it in its fixture).
+if [ -z "$ONLY" ] || [ "$ONLY" = "no-local-constants" ]; then
+  actual="$(node "$CLI" --path "$DIR" --rules no-local-constants --files constants/limits.ts --format json --no-error 2>/dev/null | finding_lines)"
+  verdict no-local-constants:root-constants "" "$actual"
+fi
+
+# promise-all-opportunity names a dynamic import by its specifier; the type string held an absolute path
+if [ -z "$ONLY" ] || [ "$ONLY" = "promise-all-opportunity" ]; then
+  pa_msg="$(node "$CLI" --path "$DIR" --rules promise-all-opportunity --files fixtures/promise-all-opportunity.fixture.ts --format json --no-error 2>/dev/null \
+    | python3 -c 'import json,sys; print(next((d["message"] for d in json.load(sys.stdin)["diagnostics"] if "import(" in d["message"]), "none"))' 2>/dev/null)"
+  verdict promise-all-opportunity:import-message 'Sequential awaits could be Promise.all: import("./promise-all-opportunity.helper") + import("node:url")' "$pa_msg"
+fi
+
+# effect-cleanup walks each helper body once per cleanup: nine mutually calling helpers and a 20-step ladder of
+# double calls stay fast, clean and alive (a crash exits 2 with no findings, so the exit code is checked too)
+if [ -z "$ONLY" ] || [ "$ONLY" = "effect-cleanup" ]; then
+  ec_start=$(date +%s)
+  ec_json="$(node "$CLI" --path "$DIR" --rules effect-cleanup --files fixtures/effect-cleanup.graph.tsx --format json --no-error 2>/dev/null)"
+  ec_rc=$?
+  ec_secs=$(( $(date +%s) - ec_start ))
+  verdict effect-cleanup:recursion-graph "rc=0 [] fast" "rc=$ec_rc [$(printf '%s' "$ec_json" | finding_lines)] $([ "$ec_secs" -lt 15 ] && echo fast || echo "slow ${ec_secs}s")"
+fi
+
+# severity-island: groups, overrides (sub-check, file-scoped) and include decide each finding's severity.
+# Each src file holds a typescript:no-explicit-any finding (line 2), an untagged typescript finding (line 3) and a
+# third statement; rules/sub/probe.ts reports untagged, "tagged" and isSubCheckDisabled-gated findings on lines 2-4.
+# A temp copy is a git repo, since a full scan lists files through git; each case writes its own config. A case
+# prints the sorted "file:line:col severity" pairs, OFF when the rule is off everywhere, or ERR on any other failure.
+SV_ISLAND="$DIR/severity-island"
+if [ -d "$SV_ISLAND" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "severity" ]; }; then
+  sv_root="$(mktemp -d)"; sv_tmp="$sv_root/project"
+  mkdir -p "$sv_tmp" "$sv_root/outside" && cp -R "$SV_ISLAND/." "$sv_tmp"
+  printf 'export const outside = (x: any) => x;\n' > "$sv_root/outside/c.ts"
+  (cd "$sv_tmp" && git init -q && git add -A)
+  sv_case() {
+    local name="$1" cfg="$2" want="$3" rule="${4:-typescript}"; shift 4 2>/dev/null || shift $#
+    printf 'export default { rulesDir: "rules", ...%s };\n' "$cfg" > "$sv_tmp/dlint.config.ts"
+    local out err rc
+    out="$(node "$CLI" --path "$sv_tmp" --rules "$rule" --format compact --no-error "$@" 2>"$sv_root/err")"; rc=$?
+    err="$(cat "$sv_root/err")"
+    case "$err" in *"turned off in config"*) out=OFF ;; *) [ "$rc" -ne 0 ] && out=ERR || out="$(printf '%s\n' "$out" | awk '/^src/ {print $1, $2}' | sort | xargs)" ;; esac
+    verdict "severity:$name" "$want" "$out"
+  }
+  OP='{ id: "opinionated", severity: "error" }'
+  B="src/b.ts"; A="src/only/a.ts"
+  sv_case group-sub-check '{ groups: [{ id: "opinionated", severity: "warning" }] }' "$B:2:22 warning $B:3:33 error $A:2:22 warning $A:3:33 error"
+  sv_case sub-check-override "{ groups: [$OP], overrides: [{ ruleId: \"typescript:no-explicit-any\", severity: \"warning\" }] }" "$B:2:22 warning $B:3:33 error $A:2:22 warning $A:3:33 error"
+  sv_case rule-override-leaves-group-sub "{ groups: [$OP], overrides: [{ ruleId: \"typescript\", severity: \"warning\" }] }" "$B:2:22 error $B:3:33 warning $A:2:22 error $A:3:33 warning"
+  sv_case rule-override-alone '{ overrides: [{ ruleId: "typescript", severity: "warning" }] }' "$B:3:33 warning $A:3:33 warning"
+  sv_case last-override-wins '{ overrides: [{ ruleId: "typescript", severity: "error" }, { ruleId: "typescript", severity: "warning" }] }' "$B:3:33 warning $A:3:33 warning"
+  sv_case only-sub-check-on '{ overrides: [{ ruleId: "typescript", severity: "off" }, { ruleId: "typescript:no-explicit-any", severity: "error" }] }' "$B:2:22 error $A:2:22 error"
+  sv_case file-scoped-rule "{ groups: [$OP], overrides: [{ ruleId: \"typescript\", severity: \"warning\", files: [\"src/only/\"] }] }" "$B:2:22 error $B:3:33 error $A:2:22 error $A:3:33 warning"
+  sv_case file-scoped-rule-off "{ groups: [$OP], overrides: [{ ruleId: \"typescript\", severity: \"off\", files: [\"src/only/\"] }] }" "$B:2:22 error $B:3:33 error"
+  sv_case file-scoped-sub-check "{ groups: [$OP], overrides: [{ ruleId: \"typescript:no-explicit-any\", severity: \"off\", files: [\"src/only/\"] }] }" "$B:2:22 error $B:3:33 error $A:3:33 error"
+  sv_case scoped-sub-beats-scoped-rule '{ overrides: [{ ruleId: "typescript", severity: "off", files: ["src/only/"] }, { ruleId: "typescript:no-explicit-any", severity: "warning", files: ["src/only/"] }] }' "$B:3:33 error $A:2:22 warning"
+  sv_case global-sub-beats-rule-off '{ overrides: [{ ruleId: "typescript:no-explicit-any", severity: "warning" }, { ruleId: "typescript", severity: "off", files: ["src/only/"] }] }' "$B:2:22 warning $B:3:33 error $A:2:22 warning"
+  sv_case file-scoped-enables '{ overrides: [{ ruleId: "typescript", severity: "off" }, { ruleId: "typescript", severity: "error", files: ["src/only/"] }] }' "$A:3:33 error"
+  sv_case file-scoped-sub-enables '{ overrides: [{ ruleId: "typescript", severity: "off" }, { ruleId: "typescript:no-explicit-any", severity: "error", files: ["src/only/"] }] }' "$A:2:22 error"
+  sv_case off-everywhere '{ overrides: [{ ruleId: "typescript", severity: "off" }] }' "OFF"
+  sv_case off-everywhere-scoped '{ overrides: [{ ruleId: "typescript", severity: "off" }, { ruleId: "typescript", severity: "off", files: ["src/only/"] }] }' "OFF"
+  sv_case empty-files-ignored '{ overrides: [{ ruleId: "typescript", severity: "off", files: [] }] }' "$B:3:33 error $A:3:33 error"
+  sv_case include-glob "{ include: [\"src/only/**/*.ts\"], groups: [$OP] }" "$A:2:22 error $A:3:33 error"
+  sv_case include-no-match '{ include: ["./src/**/*.ts"] }' "ERR"
+  sv_case include-no-file-of-extension '{ include: ["src/**/*.tsx"] }' "ERR"
+  sv_case files-dir-include "{ include: [\"src/only/**/*.ts\"], groups: [$OP] }" "$A:2:22 error $A:3:33 error" typescript --files src
+  sv_case files-outside '{}' "" typescript --files ../outside
+  sv_case probe-meta '{}' "$B:2:1 warning $B:3:1 warning $B:4:1 warning $A:2:1 warning $A:3:1 warning $A:4:1 warning" probe
+  sv_case probe-override-beats-meta '{ overrides: [{ ruleId: "probe", severity: "error" }] }' "$B:2:1 error $B:3:1 error $B:4:1 error $A:2:1 error $A:3:1 error $A:4:1 error" probe
+  sv_case probe-group-sub-beats-meta '{ groups: [{ id: "probe-group", severity: "error", rules: ["probe:tagged"] }] }' "$B:2:1 warning $B:3:1 error $B:4:1 warning $A:2:1 warning $A:3:1 error $A:4:1 warning" probe
+  sv_case probe-gated-off '{ overrides: [{ ruleId: "probe:gated", severity: "off" }] }' "$B:2:1 warning $B:3:1 warning $A:2:1 warning $A:3:1 warning" probe
+  sv_case probe-path-alias '{ overrides: [{ ruleId: "sub/probe", severity: "off" }] }' "OFF" probe
+  rm -rf "$sv_root"
+fi
+
+# workspace-island: a workspace package linked into node_modules is project code, so the export
+# app/main.ts imports through the link stays used. A temp copy gets the link, as a package manager would.
+WS_ISLAND="$DIR/workspace-island"
+if [ -d "$WS_ISLAND" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "workspace" ]; }; then
+  ws_tmp="$(mktemp -d)"
+  cp -R "$WS_ISLAND/." "$ws_tmp"
+  mkdir -p "$ws_tmp/node_modules/@ws"
+  ln -sfn ../../packages/shared "$ws_tmp/node_modules/@ws/shared"
+  # unused-export is opinionated: a throwaway config enables its group
+  printf 'export default { groups: [{ id: "opinionated", severity: "error" }] };\n' > "$ws_tmp/dlint.config.ts"
+  actual="$( (cd "$ws_tmp" && node "$CLI" --path . --rules unused-export --files packages/shared/index.ts --format json --no-error 2>/dev/null) | finding_lines)"
+  verdict workspace:linked-package "$(expected_lines "$WS_ISLAND/packages/shared/index.ts")" "$actual"
+  rm -rf "$ws_tmp"
 fi
 
 # config-resolve: prove `dlint --config <file>` resolves rulesDir + a SUBDIR tsconfig relative to
@@ -101,6 +195,7 @@ OPT_CFG="$DIR/options-island.dlint.config.ts"
 OPT_FILE="options-island/src/sample.ts"
 if [ -f "$OPT_CFG" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "options" ]; }; then
   island_check options "$OPT_CFG" "$OPT_FILE" max-file-lines
+  island_check options:cleanup-map-string "$OPT_CFG" "options-island/src/effect.ts" effect-cleanup
 fi
 
 # nodup: prove no-duplicate-schema-export's `ignorePaths` option. keep.ts exports Twin (also in
@@ -181,7 +276,8 @@ fi
 # sdk-contract: a consumer probe rule reports where SDK helpers answer yes (isInConditionalBranch,
 # isLibDeclaration, isFromPackage), pinning contracts no bundled rule exercises. A second run checks
 # --extract on an exported arrow function: function-tags must not crash and must read its return type,
-# complexity-analysis must count the arrow's own parameter and no helper function.
+# complexity-analysis must count the arrow's own parameter and no helper function, and function-consumption
+# must list imported project functions (a default export by its own name) under their file and leave axios out.
 SDK_CFG="$DIR/sdk-contract-island.dlint.config.ts"
 if [ -f "$SDK_CFG" ] && { [ -z "$ONLY" ] || [ "$ONLY" = "sdk-contract" ]; }; then
   island_check sdk-contract "$SDK_CFG" "sdk-contract-island/src/sample.ts" sdk-contract-probe
@@ -197,6 +293,10 @@ if not tag or tag["returnType"] != "string":
     print("tags:%s" % tag); sys.exit()
 if not cx or cx["parameterCount"] != 1 or cx["helperFunctionCount"] != 0:
     print("complexity:%s" % cx); sys.exit()
+fc = next((c for c in ex["function-consumption"]["items"] if c["name"] == "act"), None)
+targets = sorted((t["name"], t["file"].rsplit("/", 1)[-1]) for t in (fc or {}).get("callTargets", []))
+if targets != [("formatAmount", "format.ts"), ("probe", "actions.ts"), ("roundAmount", "format.ts")]:
+    print("consumption:%s" % targets); sys.exit()
 print("ok")
 ' 2>/dev/null)"
   verdict sdk-contract:extract ok "$ex_verdict"
@@ -257,7 +357,8 @@ fi
 # (jiti strips types at runtime, so an unchecked rule fails silently). The regression this guards is
 # itself silent: without the exports subpath, `extends` fails with TS6053 and tsc then reports an
 # unresolvable 'typescript' instead, which reads like a paths bug. Asserts the file ships, parses,
-# carries both path mappings, and is reachable through BOTH files and exports.
+# carries both path mappings (typescript: dlint's nested copy under npm first, the pnpm sibling second),
+# and is reachable through BOTH files and exports.
 if [ -z "$ONLY" ] || [ "$ONLY" = "rules-tsconfig" ]; then
   rt_verdict="$( (cd "$ROOT" && python3 -c '
 import json, re, sys
@@ -268,7 +369,7 @@ try:
 except Exception as e:
     print("unreadable:%s" % e); sys.exit()
 paths = t.get("compilerOptions", {}).get("paths", {})
-if paths.get("typescript") != ["../../typescript"]:
+if paths.get("typescript") != ["./node_modules/typescript", "../../typescript"]:
     print("bad-ts-path:%s" % paths.get("typescript")); sys.exit()
 if paths.get("@dfine-io-gmbh/dlint") != ["./build/index.d.ts"]:
     print("bad-dlint-path:%s" % paths.get("@dfine-io-gmbh/dlint")); sys.exit()
@@ -429,6 +530,42 @@ print("link-linted" if any(x["file"] == "src/link.ts" for x in d["diagnostics"])
   printf 'import { c } from "./c";\nexport type D = number;\nexport const d = c;\n' > "$fi_tmp/vms/d.ts"
   fi_vms="$(cd "$fi_tmp/vms" && node "$CLI" --rules no-import-cycle --format json --no-error --files c.ts 2>/dev/null)"
   verdict fix-island:vms-export-cycle "rc=0 [1]" "rc=$? [$(printf '%s' "$fi_vms" | finding_lines)]"
+  # A project rule resolves the SDK from its own folder: an older install there must not replace the running engine's
+  fi_stale="$fi_tmp/stale"
+  mkdir -p "$fi_stale/src" "$fi_stale/rules" "$fi_stale/node_modules/@dfine-io-gmbh/dlint"
+  printf '{"name":"@dfine-io-gmbh/dlint","type":"module","main":"index.js"}' > "$fi_stale/node_modules/@dfine-io-gmbh/dlint/package.json"
+  printf 'export const defineRule = (rule) => rule;\nexport const isLibDeclaration = () => false;\n' > "$fi_stale/node_modules/@dfine-io-gmbh/dlint/index.js"
+  cat > "$fi_stale/rules/lib-probe.ts" <<'PROBE'
+import ts from "typescript";
+import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+export default defineRule({
+  meta: { category: "quality", description: "Test probe: reports Promise when the SDK sees a lib symbol" },
+  check(ctx) {
+    ctx.walk((node) => {
+      const sym = ts.isIdentifier(node) && node.text === "Promise" ? ctx.checker.getSymbolAtLocation(node) : undefined;
+      if (sym && isLibDeclaration(sym)) ctx.reportAt(node, "Promise is a lib symbol");
+    });
+  },
+});
+PROBE
+  printf '{"compilerOptions":{"strict":true,"noEmit":true,"lib":["ES2020"],"types":[]},"include":["src/**/*.ts"]}' > "$fi_stale/tsconfig.json"
+  printf 'export default { bundledRules: false, rulesDir: "%s" };\n' "$fi_stale/rules" > "$fi_stale/dlint.config.ts"
+  printf 'export const settled = Promise.resolve(1);\n' > "$fi_stale/src/a.ts"
+  fi_sdk="$(cd "$fi_stale" && node "$CLI" --rules lib-probe --format json --no-error --files src/a.ts 2>/dev/null)"
+  verdict fix-island:stale-sdk "rc=0 [1]" "rc=$? [$(printf '%s' "$fi_sdk" | finding_lines)]"
+  # --files takes ./ paths and paths outside the project; a named file the ignore rules exclude is skipped with a note
+  fi_ign="$fi_tmp/ignored"
+  mkdir -p "$fi_ign/src" "$fi_tmp/outside"
+  printf '{"compilerOptions":{"strict":true,"noEmit":true,"types":[]},"include":["src/**/*.ts"]}' > "$fi_ign/tsconfig.json"
+  printf 'debugger;\nexport const a = 1;\n' > "$fi_ign/src/a.ts"
+  printf 'debugger;\nexport const b = 1;\n' > "$fi_ign/src/b.ts"
+  printf 'export const outside = 1;\n' > "$fi_tmp/outside/o.ts"
+  printf 'src/b.ts\n' > "$fi_ign/.dlintignore"
+  printf 'export default {};\n' > "$fi_ign/dlint.config.ts"
+  fi_files="$(cd "$fi_ign" && node "$CLI" --rules no-debug-code --format json --no-error --files ./src/a.ts src/b.ts ../outside/o.ts 2>"$fi_out/ign.err")"
+  fi_v="rc=$? [$(printf '%s' "$fi_files" | finding_lines)]"
+  grep -q 'skipped src/b.ts, it matches "src/b.ts" in .dlintignore' "$fi_out/ign.err" && fi_v="$fi_v noted"
+  verdict fix-island:files-ignore "rc=0 [1] noted" "$fi_v"
   rm -rf "$fi_tmp" "$fi_out"
 fi
 

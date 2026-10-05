@@ -1,7 +1,7 @@
 // Ensures React.cache() wrapped functions have at least 2 callers.
 // Single-caller cache provides no deduplication benefit — adds complexity without value.
 import ts from "typescript";
-import { defineRule, resolveSymbol, isFromPackage } from "@dfine-io-gmbh/dlint";
+import { defineRule, isProjectSourceFile, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -14,14 +14,9 @@ const callerCountsCache = new WeakMap<
   Map<string, number>
 >();
 
-/** Build key from resolved symbol's original declaration location */
-function symbolKey(
-  checker: ts.TypeChecker,
-  sym: ts.Symbol,
-  fallbackName: string
-): string {
-  const resolved = resolveSymbol(checker, sym);
-  const decl = resolved.declarations?.[0];
+// Key of a symbol's original declaration; callers pass alias-resolved symbols
+function symbolKey(sym: ts.Symbol, fallbackName: string): string {
+  const decl = sym.declarations?.[0];
   return decl
     ? `${decl.getSourceFile().fileName}:${decl.getStart()}`
     : fallbackName;
@@ -33,14 +28,13 @@ function buildCallerCounts(
 ): Map<string, number> {
   const counts = new Map<string, number>();
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     function visit(node: ts.Node): void {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-        const sym = checker.getSymbolAtLocation(node.expression);
-        if (sym) {
-          const key = symbolKey(checker, sym, node.expression.text);
-          counts.set(key, (counts.get(key) ?? 0) + 1);
-        }
+      // A call through a namespace import (q.getUser()) counts like a direct one
+      const callee = ts.isCallExpression(node) ? resolveCallee(node, checker) : undefined;
+      if (callee) {
+        const key = symbolKey(callee.symbol, callee.name);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
       }
       ts.forEachChild(node, visit);
     }
@@ -64,19 +58,13 @@ export default defineRule({
     }
 
     ctx.walk((node) => {
-      if (
-        ts.isVariableDeclaration(node) &&
-        node.initializer &&
-        ts.isCallExpression(node.initializer) &&
-        ts.isIdentifier(node.initializer.expression) &&
-        node.initializer.expression.text === "cache" &&
-        isFromPackage(node.initializer.expression, ctx.checker, "react") &&
-        ts.isIdentifier(node.name)
-      ) {
+      if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || !node.initializer || !ts.isCallExpression(node.initializer)) return;
+      const wrapper = resolveCallee(node.initializer, ctx.checker);
+      if (wrapper?.packageName === "react" && wrapper.name === "cache") {
         const fnName = node.name.text;
         const sym = ctx.checker.getSymbolAtLocation(node.name);
         if (!sym) return;
-        const key = symbolKey(ctx.checker, sym, fnName);
+        const key = symbolKey(sym, fnName);
         const count = callerCounts.get(key) ?? 0;
         if (count < minCallers) {
           ctx.reportAt(

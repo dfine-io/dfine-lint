@@ -4,6 +4,7 @@
 import ts from "typescript";
 import { getExportedFunctions } from "../core/program.js";
 import { defineExtractor } from "../helpers/define-extractor.js";
+import { isProjectSourceFile, packageOfFile, resolveSymbol } from "../helpers/ast.js";
 import type { FunctionConsumption } from "../types.js";
 
 function extractCallTargets(checker: ts.TypeChecker, body: ts.Block): { name: string; file: string }[] {
@@ -12,14 +13,19 @@ function extractCallTargets(checker: ts.TypeChecker, body: ts.Block): { name: st
   function walk(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
       const expr = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression;
-      const sym = checker.getSymbolAtLocation(expr);
+      // Through the import alias to the declaration: an imported readFile lives in its package, not the caller
+      const raw = checker.getSymbolAtLocation(expr);
+      const sym = raw && resolveSymbol(checker, raw);
       if (sym) {
         const decl = sym.valueDeclaration ?? sym.declarations?.[0];
         if (decl) {
           const sf = decl.getSourceFile();
-          if (!sf.fileName.includes("node_modules")) {
-            const key = `${sf.fileName}::${sym.name}`;
-            if (!seen.has(key)) { seen.add(key); targets.push({ name: sym.name, file: sf.fileName }); }
+          if (packageOfFile(sf.fileName) === undefined) {
+            // A default export's symbol is named "default": take the declaration's own name
+            const declared = ts.getNameOfDeclaration(decl);
+            const name = declared && ts.isIdentifier(declared) ? declared.text : sym.name;
+            const key = `${sf.fileName}::${name}`;
+            if (!seen.has(key)) { seen.add(key); targets.push({ name, file: sf.fileName }); }
           }
         }
       }
@@ -65,7 +71,7 @@ export default defineExtractor<FunctionConsumption>({
   name: "Function Consumption Analysis",
   extract(ctx) {
     const sf = ctx.sourceFile;
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) return [];
+    if (!isProjectSourceFile(sf)) return [];
     const results: FunctionConsumption[] = [];
     for (const fn of getExportedFunctions(sf, ctx.checker)) {
       if (!fn.body || !ts.isBlock(fn.body) || fn.body.statements.length < 3) continue;

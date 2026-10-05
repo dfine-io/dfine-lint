@@ -1,12 +1,14 @@
-// Detects UPPER_SNAKE constants with primitive values outside */constants/* directories.
+// Detects UPPER_SNAKE constants with primitive values outside constants/ directories (any depth, root included).
 // Project convention: all constants must be centralized in constants/ directories.
 import ts from "typescript";
+import { relative, sep } from "node:path";
 import { defineRule } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
 // ===========================================================================
 const TRIVIAL_NUMBERS = new Set([0, 1, -1]);
+const CONSTANTS_DIR = "/constants/";
 // ===========================================================================
 
 const UPPER_SNAKE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -38,9 +40,11 @@ export default defineRule({
   },
   check(ctx) {
     const trivialNumbers = ctx.options.trivialNumbers ? new Set(ctx.options.trivialNumbers as number[]) : TRIVIAL_NUMBERS;
-    const projectRoot = ctx.program.getCurrentDirectory();
-    const relativePath = ctx.sourceFile.fileName.slice(projectRoot.length + 1);
-    if (relativePath.includes("/constants/")) return;
+    const option = ctx.options.constantsDir;
+    const constantsDir = typeof option === "string" ? option : CONSTANTS_DIR;
+    // Same path form as no-duplicated-constants (a mirror, rules stay self-contained); the leading slash matches a root constants/
+    const projectPath = "/" + relative(ctx.projectRoot, ctx.sourceFile.fileName).split(sep).join("/");
+    if (projectPath.includes(constantsDir)) return;
 
     ctx.walk((node) => {
       if (!ts.isVariableDeclaration(node) || !node.initializer || !ts.isIdentifier(node.name)) return;

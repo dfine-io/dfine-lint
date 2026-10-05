@@ -2,7 +2,7 @@
 // with non-nullable types, and unsafe type narrowing patterns.
 // Safety issues compile but can cause runtime null/undefined errors.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
+import { defineRule, isLibDeclaration, isWriteTarget, resolveCallee, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -10,14 +10,18 @@ import { defineRule, isLibDeclaration, isWriteTarget, valueSymbolOf } from "@dfi
 const ARRAY_CALLBACK_METHODS_REQUIRING_RETURN = new Set(["map", "filter", "find", "findIndex", "every", "some", "reduce", "flatMap"]);
 // ===========================================================================
 
-function isPromiseExecutorParam(id: ts.Identifier, checker: ts.TypeChecker): boolean {
+// The executor's second parameter rejects, whatever it is called: new Promise((res, fail) => fail("x"))
+function isPromiseRejectParam(id: ts.Identifier, checker: ts.TypeChecker): boolean {
   const sym = checker.getSymbolAtLocation(id);
   if (!sym?.valueDeclaration || !ts.isParameter(sym.valueDeclaration)) return false;
   const fn = sym.valueDeclaration.parent;
   if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
-  if (!ts.isNewExpression(fn.parent) || !ts.isIdentifier(fn.parent.expression)) return false;
-  const ctorSym = checker.getSymbolAtLocation(fn.parent.expression);
-  return !!ctorSym && isLibDeclaration(ctorSym);
+  // A `this` parameter is a type annotation, not a position
+  const params = fn.parameters.filter((p) => !(ts.isIdentifier(p.name) && p.name.text === "this"));
+  if (params.indexOf(sym.valueDeclaration) !== 1) return false;
+  if (!ts.isNewExpression(fn.parent) || fn.parent.arguments?.[0] !== fn) return false;
+  const ctor = resolveCallee(fn.parent, checker);
+  return !!ctor?.lib && ctor.name === "Promise";
 }
 
 export default defineRule({
@@ -30,6 +34,7 @@ export default defineRule({
     const arrayCallbackMethods = ctx.options.arrayCallbackMethods ? new Set(ctx.options.arrayCallbackMethods as string[]) : ARRAY_CALLBACK_METHODS_REQUIRING_RETURN;
 
     ctx.walk((node) => {
+      const callee = ts.isCallExpression(node) || ts.isNewExpression(node) ? resolveCallee(node, ctx.checker) : undefined;
       // 1. no-constructor-return — return value in constructor
       if (ts.isConstructorDeclaration(node) && node.body) {
         for (const stmt of node.body.statements) {
@@ -41,17 +46,20 @@ export default defineRule({
         }
       }
 
-      // 2. no-promise-executor-return — return in Promise executor
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
-        const sym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!sym || !isLibDeclaration(sym) || node.expression.text !== "Promise") return;
-        const executor = node.arguments?.[0];
-        if (!executor || (!ts.isArrowFunction(executor) && !ts.isFunctionExpression(executor))) return;
-        if (!executor.body || !ts.isBlock(executor.body)) return;
-        for (const stmt of executor.body.statements) {
-          if (!ts.isReturnStatement(stmt) || !stmt.expression) continue;
-          ctx.reportAt(stmt, "Promise executor should not return a value — use resolve()/reject()", {
-            action: "use-resolve", pattern: "resolve(value) instead of return value",
+      // 2 + 4. Promise executor of the lib Promise (globalThis.Promise and aliases too): no returned value, no async
+      const executor = ts.isNewExpression(node) ? node.arguments?.[0] : undefined;
+      if (callee?.lib && callee.name === "Promise" && executor && (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor))) {
+        if (ts.isBlock(executor.body)) {
+          for (const stmt of executor.body.statements) {
+            if (!ts.isReturnStatement(stmt) || !stmt.expression) continue;
+            ctx.reportAt(stmt, "Promise executor should not return a value — use resolve()/reject()", {
+              action: "use-resolve", pattern: "resolve(value) instead of return value",
+            });
+          }
+        }
+        if (ts.getCombinedModifierFlags(executor) & ts.ModifierFlags.Async) {
+          ctx.reportAt(executor, "Remove async from Promise executor -- errors won't reject", {
+            action: "remove-async", pattern: "Remove async from executor, use resolve/reject explicitly",
           });
         }
       }
@@ -60,7 +68,6 @@ export default defineRule({
       if (ts.isBinaryExpression(node)) {
         const isArithmetic = node.operatorToken.kind >= ts.SyntaxKind.PlusToken &&
           node.operatorToken.kind <= ts.SyntaxKind.PercentToken;
-        if (!isArithmetic) return;
         const isUnsafeOptionalChain = (n: ts.Node): boolean => {
           if (ts.isPropertyAccessExpression(n) && n.questionDotToken) return true;
           if (ts.isCallExpression(n) && n.questionDotToken) return true;
@@ -82,43 +89,30 @@ export default defineRule({
             });
           }
         };
-        checkSide(node.left);
-        checkSide(node.right);
+        // = and == are no arithmetic: only this check skips them, require-atomic-updates below still runs
+        if (isArithmetic) {
+          checkSide(node.left);
+          checkSide(node.right);
+        }
       }
 
-      // 4. no-async-promise-executor — async function as Promise executor
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
-        const sym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!sym || !isLibDeclaration(sym) || node.expression.text !== "Promise") return;
-        const executor = node.arguments?.[0];
-        if (!executor) return;
-        const isAsync = (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
-          !!(ts.getCombinedModifierFlags(executor) & ts.ModifierFlags.Async);
-        if (!isAsync) return;
-        ctx.reportAt(executor, "Remove async from Promise executor -- errors won't reject", {
-          action: "remove-async", pattern: "Remove async from executor, use resolve/reject explicitly",
-        });
-      }
-
-      // 5. require-atomic-updates — await in assignment to outer variable
-      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ts.isIdentifier(node.left) && ts.isAwaitExpression(node.right)) {
+      // 5. require-atomic-updates — a variable of an outer function read before an await and written after it
+      if (ts.isBinaryExpression(node) && ts.isIdentifier(node.left) &&
+          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
         const sym = ctx.checker.getSymbolAtLocation(node.left);
-        if (!sym?.valueDeclaration) return;
-        const declParent = sym.valueDeclaration.parent;
-        const assignParent = node.parent;
-        if (declParent !== assignParent && !isDescendant(assignParent, declParent)) {
-          ctx.reportAt(node, "Store await result in local variable -- outer assignment may race", {
-            action: "use-local", pattern: "const result = await ...; outerVar = result;",
+        const fn = ts.findAncestor(node.parent, ts.isFunctionLike);
+        // A compound assignment reads its target before the right side runs
+        const compound = node.operatorToken.kind !== ts.SyntaxKind.EqualsToken;
+        const outer = !!sym?.valueDeclaration && !!fn && !ts.findAncestor(sym.valueDeclaration, (n) => n === fn);
+        if (sym && outer && readsBeforeAwait(node.right, sym, compound, ctx.checker)) {
+          ctx.reportAt(node, `'${node.left.text}' is read before the await and written after it -- a concurrent update is lost`, {
+            action: "read-after-await", pattern: `const value = await ...; ${node.left.text} += value;`,
           });
         }
       }
 
-      // 6. radix — parseInt without radix argument
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.arguments.length === 1) {
-        const sym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!sym || !isLibDeclaration(sym)) return;
-        if (node.expression.text !== "parseInt") return;
+      // 6. radix — parseInt or Number.parseInt without radix; no early return, later checks still run
+      if (ts.isCallExpression(node) && node.arguments.length === 1 && callee?.lib && callee.name === "parseInt") {
         ctx.reportAt(node, "parseInt requires radix argument", {
           action: "add-radix", pattern: "parseInt(str, 10)",
         });
@@ -145,9 +139,8 @@ export default defineRule({
       }
 
       // 8. prefer-promise-reject-errors — reject() with non-Error argument
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
-          node.expression.text === "reject" && node.arguments.length > 0) {
-        if (!isPromiseExecutorParam(node.expression, ctx.checker)) return;
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.arguments.length > 0 &&
+          isPromiseRejectParam(node.expression, ctx.checker)) {
         const arg = node.arguments[0];
         if (!arg) return;
         if (ts.isStringLiteral(arg) || ts.isNumericLiteral(arg) || ts.isTemplateExpression(arg) ||
@@ -160,8 +153,9 @@ export default defineRule({
 
       // 9. array-callback-return — map/filter/find/etc. without return
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const method = node.expression.name.text;
-        if (!arrayCallbackMethods.has(method)) return;
+        // A lib array method only: Bus.map(cb) on a project class expects no return value
+        if (!callee?.lib || !arrayCallbackMethods.has(callee.name)) return;
+        const method = callee.name;
         if (node.arguments.length === 0) return;
         const callback = node.arguments[0];
         if (!callback) return;
@@ -207,11 +201,16 @@ function hasNestedReturn(block: ts.Block): boolean {
   return found;
 }
 
-function isDescendant(child: ts.Node, parent: ts.Node): boolean {
-  let current = child.parent;
-  while (current) {
-    if (current === parent) return true;
-    current = current.parent;
-  }
-  return false;
+// True when the symbol is read before the last await of the expression resumes; nested functions run later
+function readsBeforeAwait(expr: ts.Expression, sym: ts.Symbol, readsFirst: boolean, checker: ts.TypeChecker): boolean {
+  let firstRead = readsFirst ? expr.pos : Infinity;
+  let lastResume = -1;
+  const walk = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n)) return;
+    if (ts.isAwaitExpression(n)) lastResume = Math.max(lastResume, n.end);
+    if (ts.isIdentifier(n) && valueSymbolOf(n, checker) === sym) firstRead = Math.min(firstRead, n.getStart());
+    ts.forEachChild(n, walk);
+  };
+  walk(expr);
+  return firstRead < lastResume;
 }

@@ -1,10 +1,8 @@
-// Flags exported Zod schema constants that share the same name across multiple files.
-// Duplicate Zod .brand() calls create distinct TypeScript brand identities at runtime,
-// making values from one file incompatible with the other — a subtle type-safety bug.
-// Detection: TypeChecker structural check (has parse + safeParse methods), not name-suffix.
-// Uses WeakMap<Program> cache for O(N×E) one-time scan + O(1) per-file check.
+// Flags exported Zod schemas that share a name across files: separate .brand() calls make incompatible types.
+// A schema is a constant whose zod type derives from ZodType ($ZodType in zod 4); a ZodError is none.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { relative } from "node:path";
+import { classOrInterfaceOf, defineRule, isProjectSourceFile, isTypeFromPackage } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - defaults; override via ruleOptions["no-duplicate-schema-export"]
@@ -25,8 +23,13 @@ function isExportedStatement(node: ts.Statement): boolean {
   return mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
 }
 
-function isZodSchemaType(type: ts.Type): boolean {
-  return !!type.getProperty("parse") && !!type.getProperty("safeParse");
+// A zod schema: ZodType / $ZodType or a base of it, also inside the intersection .brand() or a guard .refine() returns
+function isZodSchemaType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.isUnionOrIntersection()) return type.types.some((t) => isZodSchemaType(t, checker));
+  const sym = type.getSymbol();
+  if (sym && (sym.name === "ZodType" || sym.name === "$ZodType") && isTypeFromPackage(type, checker, "zod")) return true;
+  const declared = classOrInterfaceOf(type);
+  return !!declared && checker.getBaseTypes(declared).some((base) => isZodSchemaType(base, checker));
 }
 
 function buildDuplicateMap(
@@ -34,47 +37,36 @@ function buildDuplicateMap(
   checker: ts.TypeChecker,
   ignorePaths: readonly string[],
 ): DuplicateMap {
-  const collected = new Map<string, string[]>();
-
+  // Names first, syntax only: only a name exported from two files needs a type check
+  const byName = new Map<string, { file: string; name: ts.Identifier }[]>();
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     if (ignorePaths.some((p) => sf.fileName.includes(p))) continue;
-
     for (const stmt of sf.statements) {
       if (!ts.isVariableStatement(stmt) || !isExportedStatement(stmt)) continue;
-
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name)) continue;
-        if (!isZodSchemaType(checker.getTypeAtLocation(decl.name))) continue;
-
-        const list = collected.get(decl.name.text);
-        if (list) {
-          list.push(sf.fileName);
-        } else {
-          collected.set(decl.name.text, [sf.fileName]);
-        }
+        const list = byName.get(decl.name.text) ?? [];
+        list.push({ file: sf.fileName, name: decl.name });
+        byName.set(decl.name.text, list);
       }
     }
   }
 
   const duplicates: DuplicateMap = new Map();
-  for (const [name, files] of collected) {
+  for (const [name, exports] of byName) {
+    if (exports.length < 2) continue;
+    const files = exports.filter((e) => isZodSchemaType(checker.getTypeAtLocation(e.name), checker)).map((e) => e.file);
     if (files.length >= 2) duplicates.set(name, files);
   }
   return duplicates;
-}
-
-function shortenPath(fullPath: string, programRoot: string): string {
-  return fullPath.startsWith(programRoot)
-    ? fullPath.slice(programRoot.length + 1)
-    : fullPath;
 }
 
 export default defineRule({
   meta: {
     category: "quality",
     description:
-      "No duplicate *Schema exports — distinct .brand() calls create incompatible types",
+      "No duplicate Zod schema exports — distinct .brand() calls create incompatible types",
   },
   check(ctx) {
     const ignorePaths =
@@ -91,7 +83,6 @@ export default defineRule({
     const dupes = cached.map;
 
     if (dupes.size === 0) return;
-    const root = ctx.program.getCurrentDirectory();
 
     ctx.walk((node) => {
       if (!ts.isVariableStatement(node) || !isExportedStatement(node)) return;
@@ -103,7 +94,7 @@ export default defineRule({
 
         const others = files
           .filter((f) => f !== ctx.sourceFile.fileName)
-          .map((f) => shortenPath(f, root));
+          .map((f) => relative(ctx.projectRoot, f));
 
         ctx.reportAt(
           decl.name,

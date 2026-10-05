@@ -17,7 +17,7 @@ export default defineRule({
     description: "No unescaped HTML entities in JSX text",
   },
   check(ctx) {
-    if (!ctx.sourceFile.fileName.endsWith(".tsx")) return;
+    if (ctx.sourceFile.languageVariant !== ts.LanguageVariant.JSX) return;
     ctx.walk((node) => {
       if (!ts.isJsxText(node)) return;
       const match = UNESCAPED_PATTERN.exec(node.text);

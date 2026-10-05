@@ -19,10 +19,11 @@ const USAGE_THRESHOLD = 0.25;
 const PARTIAL_PICK_MAX_FIELDS = 5;
 // ===========================================================================
 
-function isPartialTypeNode(typeNode: ts.TypeNode | undefined): typeNode is ts.TypeReferenceNode {
+function isPartialTypeNode(typeNode: ts.TypeNode | undefined, checker: ts.TypeChecker): typeNode is ts.TypeReferenceNode {
   if (!typeNode || !ts.isTypeReferenceNode(typeNode)) return false;
-  if (!ts.isIdentifier(typeNode.typeName)) return false;
-  if (typeNode.typeName.text !== "Partial") return false;
+  // The TS lib's Partial, never a project type that shares the name
+  const sym = checker.getSymbolAtLocation(typeNode.typeName);
+  if (sym?.name !== "Partial" || !isLibDeclaration(sym)) return false;
   return (typeNode.typeArguments?.length ?? 0) === 1;
 }
 
@@ -172,14 +173,14 @@ export default defineRule({
 
         // --- Sub-check 2: partial-type-param ---
         if (
-          isPartialTypeNode(param.type) &&
+          isPartialTypeNode(param.type, ctx.checker) &&
           !ctx.isSubCheckDisabled("partial-type-param")
         ) {
-          const innerTypeArg = (param.type as ts.TypeReferenceNode).typeArguments?.[0];
+          const innerTypeArg = param.type.typeArguments?.[0];
           if (!innerTypeArg) continue;
           const innerType = ctx.checker.getTypeFromTypeNode(innerTypeArg);
           const innerProps = innerType.getProperties();
-          if (innerProps.length > 0 && node.body && !isPassedThrough(paramSymbol, ctx.checker, node.body)) {
+          if (innerProps.length > 0 && !isPassedThrough(paramSymbol, ctx.checker, node.body)) {
             const used = new Set<string>();
             collectUsedProps(paramSymbol, ctx.checker, node.body, used);
             if (used.size > 0 && used.size <= partialPickMaxFields && used.size < innerProps.length) {
@@ -192,6 +193,7 @@ export default defineRule({
                   pattern: "Use Pick<T, K> instead of Partial<T> - it states exactly which fields matter",
                   reference: "https://www.typescriptlang.org/docs/handbook/utility-types.html",
                 },
+                "partial-type-param",
               );
               continue;
             }
@@ -235,12 +237,11 @@ export default defineRule({
 
         const allProps = paramType.getProperties();
         if (allProps.length < minProperties) continue;
-        if (node.body && isPassedThrough(paramSymbol, ctx.checker, node.body))
+        if (isPassedThrough(paramSymbol, ctx.checker, node.body))
           continue;
 
         const usedProps = new Set<string>();
-        if (node.body)
-          collectUsedProps(paramSymbol, ctx.checker, node.body, usedProps);
+        collectUsedProps(paramSymbol, ctx.checker, node.body, usedProps);
         const ratio = usedProps.size / allProps.length;
         if (ratio < usageThreshold && usedProps.size > 0) {
           ctx.reportAt(
@@ -250,7 +251,8 @@ export default defineRule({
               action: "narrow-type",
               pattern: "Use Pick<Type, K> or destructure only needed properties",
               reference: "https://www.typescriptlang.org/docs/handbook/utility-types.html",
-            }
+            },
+            "usage-ratio",
           );
         }
       }

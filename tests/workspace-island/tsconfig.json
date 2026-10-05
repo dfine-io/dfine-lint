@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": []
+  },
+  "include": ["app/**/*.ts", "packages/**/*.ts"]
+}

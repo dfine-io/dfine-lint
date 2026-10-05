@@ -56,6 +56,40 @@ export function accumulateIf(x: number, y: number) {
   return s;
 }
 
+// A seed chain shares its shape with seedProjects in the helper, not its body: 10 vs 13 repeats.
+// The length bound already parts this pair; drainMostly below is the one only counted repeats part.
+declare function seed(kind: string): Promise<void>;
+export async function seedUsers() {
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+  await seed("user");
+}
+
+// Same length and the same bigram set as drainRarely in the helper, but 10 awaits against 3: no clone.
+// A bigram set reads both as 100% alike; counted repeats keep them apart.
+declare function drain(kind: string): Promise<void>;
+export async function drainMostly(done: boolean) {
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  await drain("a");
+  if (done) return;
+  if (done) return;
+  await drain("a");
+}
+
 // Ten statements without any token, like pauseTenClone in the helper: no similarity, no clone.
 export function pauseTen() {
   debugger;

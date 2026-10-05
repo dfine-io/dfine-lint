@@ -4,28 +4,32 @@ import { TS_LIB_DIR } from "../core/constants.js";
 
 // === Semantic Utility Functions (Compiler API) ===
 
-// File name of a TypeScript lib.*.d.ts file, or undefined for any other file (typescript.d.ts shares the directory)
-function tsLibFileName(fileName: string): string | undefined {
+// A TypeScript lib.*.d.ts file (typescript.d.ts shares the directory)
+function isTsLibFile(fileName: string): boolean {
   const name = basename(fileName);
-  return dirname(fileName) === TS_LIB_DIR && name.startsWith("lib.") ? name : undefined;
+  return dirname(fileName) === TS_LIB_DIR && name.startsWith("lib.");
+}
+
+// The package a module path starts with: "@scope/name/x" gives "@scope/name", "name/x" gives "name"
+export function packageNameOf(path: string): string | undefined {
+  const [first, second] = path.split("/");
+  if (!first) return undefined;
+  return first.startsWith("@") ? `${first}/${second ?? ""}` : first;
 }
 
 // Package name of a node_modules path; @types/scope__name maps back to @scope/name
 export function packageOfFile(fileName: string): string | undefined {
   const at = fileName.lastIndexOf("/node_modules/");
   if (at < 0) return undefined;
-  const [first, second] = fileName.slice(at + "/node_modules/".length).split("/");
-  const name = first?.startsWith("@") ? `${first}/${second}` : first;
+  const name = packageNameOf(fileName.slice(at + "/node_modules/".length));
   if (!name?.startsWith("@types/")) return name;
   const typed = name.slice("@types/".length);
   return typed.includes("__") ? `@${typed.replace("__", "/")}` : typed;
 }
 
-/** Check if symbol declaration originates from TypeScript's own lib.*.d.ts (DOM, ES builtins) */
+/** Check if a symbol is declared in TypeScript's own lib.*.d.ts (DOM, ES builtins); an augmentation does not hide it */
 export function isLibDeclaration(symbol: ts.Symbol): boolean {
-  const decl = symbol.declarations?.[0];
-  if (!decl) return false;
-  return tsLibFileName(decl.getSourceFile().fileName) !== undefined;
+  return symbol.declarations?.some((d) => isTsLibFile(d.getSourceFile().fileName)) ?? false;
 }
 
 /** Check if symbol declaration originates from node_modules */
@@ -33,6 +37,11 @@ export function isNodeModulesDeclaration(symbol: ts.Symbol): boolean {
   const decl = symbol.declarations?.[0];
   if (!decl) return false;
   return packageOfFile(decl.getSourceFile().fileName) !== undefined;
+}
+
+/** A source file of the project: no .d.ts and no installed package; a symlinked workspace package counts as project */
+export function isProjectSourceFile(sourceFile: ts.SourceFile): boolean {
+  return !sourceFile.isDeclarationFile && packageOfFile(sourceFile.fileName) === undefined;
 }
 
 /** Check if a node lies in an if/else or ternary branch, not the condition. Stops at function boundaries. */
@@ -182,49 +191,60 @@ const TOSTRING_SAFE_FLAGS =
   ts.TypeFlags.Unknown |
   ts.TypeFlags.EnumLiteral;
 
-/** Check if type has own toString() (not inherited from Object.prototype) */
-export function hasOwnToString(
-  type: ts.Type,
-  checker: ts.TypeChecker,
-): boolean {
+// The lib's Object, Function and Symbol toString, per checker: a type that reaches one of them prints no own text
+const inheritedToStringCache = new WeakMap<ts.TypeChecker, ReadonlySet<ts.Symbol>>();
+function inheritedToStrings(checker: ts.TypeChecker): ReadonlySet<ts.Symbol> {
+  const cached = inheritedToStringCache.get(checker);
+  if (cached) return cached;
+  const found = new Set<ts.Symbol>();
+  for (const name of ["Object", "Function", "Symbol"]) {
+    const iface = checker.resolveName(name, undefined, ts.SymbolFlags.Interface, false);
+    const toString = iface && checker.getPropertyOfType(checker.getDeclaredTypeOfSymbol(iface), "toString");
+    if (toString) found.add(toString);
+  }
+  inheritedToStringCache.set(checker, found);
+  return found;
+}
+
+/** The class or interface a type instantiates: a generic instance (a TypeReference) reads its target */
+export function classOrInterfaceOf(type: ts.Type): ts.InterfaceType | undefined {
+  const isReference = (type.flags & ts.TypeFlags.Object) !== 0 && ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
+  const declared = isReference ? (type as ts.TypeReference).target : type;
+  return declared.isClassOrInterface() ? declared : undefined;
+}
+
+/** TypeChecker: the type is one of the named TS lib types or extends one (class AppError<T> extends Error) */
+export function extendsLibType(type: ts.Type, checker: ts.TypeChecker, names: readonly string[]): boolean {
+  const sym = type.getSymbol();
+  if (sym && isLibDeclaration(sym) && names.includes(sym.name)) return true;
+  const declared = classOrInterfaceOf(type);
+  return !!declared && checker.getBaseTypes(declared).some((base) => extendsLibType(base, checker, names));
+}
+
+/** Check if type has own toString() (not the one Object, Function or Symbol provide) */
+export function hasOwnToString(type: ts.Type, checker: ts.TypeChecker): boolean {
   if (type.flags & TOSTRING_SAFE_FLAGS) return true;
   if (type.flags & ts.TypeFlags.TypeParameter) {
     const constraint = checker.getBaseConstraintOfType(type);
     if (constraint) return hasOwnToString(constraint, checker);
     return false;
   }
-  if (checker.isArrayType(type)) return true;
-  // A1 FIX: verify built-in Date/RegExp/Error via isLibDeclaration (not name-only)
-  const typeSym = type.getSymbol();
-  if (
-    typeSym &&
-    isLibDeclaration(typeSym) &&
-    (typeSym.name === "Date" ||
-      typeSym.name === "RegExp" ||
-      typeSym.name === "Error")
-  )
-    return true;
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return true;
+  // Error, Date and RegExp print readable text, though the lib declares no toString on Error
+  if (extendsLibType(type, checker, ["Error", "Date", "RegExp"])) return true;
   if (type.isUnion())
     return type.types.every((t) => hasOwnToString(t, checker));
   if (type.isIntersection())
     return type.types.some((t) => hasOwnToString(t, checker));
-  const sym = type.getProperty("toString");
-  if (!sym?.declarations?.length) return false;
-  // Object.prototype.toString is declared in TypeScript's ES lib files; any other declaration is the type's own
-  return sym.declarations.some((d) => !tsLibFileName(d.getSourceFile().fileName)?.startsWith("lib.es"));
+  const own = checker.getPropertyOfType(checker.getApparentType(type), "toString");
+  return own !== undefined && !inheritedToStrings(checker).has(own);
 }
 
 // === Symbol Resolution ===
 
 /** Resolve alias symbol to its original target. Returns unchanged if not alias. */
-export function resolveSymbol(
-  checker: ts.TypeChecker,
-  symbol: ts.Symbol,
-): ts.Symbol {
-  if (symbol.flags & ts.SymbolFlags.Alias) {
-    return checker.getAliasedSymbol(symbol);
-  }
-  return symbol;
+export function resolveSymbol(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Symbol {
+  return symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
 }
 
 /** Check if a symbol has any of the given JSDoc tags */
@@ -235,19 +255,12 @@ export function hasJsDocTag(symbol: ts.Symbol, ...tagNames: readonly string[]): 
 // === Type Comparison ===
 
 /** Structural type assignability check */
-export function isAssignableTo(
-  checker: ts.TypeChecker,
-  source: ts.Type,
-  target: ts.Type,
-): boolean {
+export function isAssignableTo(checker: ts.TypeChecker, source: ts.Type, target: ts.Type): boolean {
   return checker.isTypeAssignableTo(source, target);
 }
 
 /** Unwrap Promise<T> to T via native getAwaitedType (handles nested Promises, PromiseLike, thenables) */
-export function unwrapPromiseType(
-  type: ts.Type,
-  checker: ts.TypeChecker,
-): ts.Type {
+export function unwrapPromiseType(type: ts.Type, checker: ts.TypeChecker): ts.Type {
   return checker.getAwaitedType(type) ?? type;
 }
 
@@ -259,18 +272,11 @@ export function isThenable(type: ts.Type, checker: ts.TypeChecker): boolean {
 }
 
 /** Check if type is a built-in collection (Array, Map, Set, their readonly forms, WeakMap, WeakSet, Promise) */
-export function isBuiltinCollection(
-  type: ts.Type,
-  checker: ts.TypeChecker,
-): boolean {
+export function isBuiltinCollection(type: ts.Type, checker: ts.TypeChecker): boolean {
   if (checker.isArrayType(type)) return true;
   // Branded intersections (readonly T[] & { __brand }) — recurse into intersection members
-  if (type.isIntersection()) {
-    return (type).types.some((t) =>
-      isBuiltinCollection(t, checker),
-    );
-  }
-  // A2 FIX: verify collection symbol is from lib.d.ts (not name-only)
+  if (type.isIntersection()) return type.types.some((t) => isBuiltinCollection(t, checker));
+  // The collection symbol must come from the TS lib, not only carry the name
   const collectionSym = type.getSymbol();
   if (!collectionSym || !isLibDeclaration(collectionSym)) return false;
   return ["Map", "Set", "ReadonlyMap", "ReadonlySet", "WeakMap", "WeakSet", "Promise"].includes(

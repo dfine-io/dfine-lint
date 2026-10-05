@@ -24,13 +24,22 @@ export function useApply(fn: (...a: number[]) => void, args: number[]) {
   fn.apply(null, args); // EXPECT: syntax
 }
 
-// prefer-rest-params (arguments): omitted — `arguments` does not resolve to a
-// FunctionScopedVariable symbol in the isolated test program, so the subcheck
-// cannot be triggered here. Covered by the rule against real code.
+// prefer-rest-params: the built-in arguments object
+export function useArguments() {
+  return arguments.length; // EXPECT: syntax
+}
+
+// NEGATIVE: a property or destructured key named arguments is no arguments object
+export function readArgumentsKey(record: Record<"arguments", number>) {
+  const { arguments: count } = record;
+  return record.arguments + count;
+}
 
 export const power = Math.pow(2, 8); // EXPECT: syntax
 export const bin = parseInt("1010", 2); // EXPECT: syntax
+export const binNum = Number.parseInt("1010", 2); // EXPECT: syntax
 export const rx = new RegExp("abc"); // EXPECT: syntax
+export const rxGlobal = new globalThis.RegExp("abc"); // EXPECT: syntax
 
 export function onlyNegated() {
   let flag = true; // EXPECT: syntax

@@ -1,6 +1,9 @@
 "use server";
+import { isAxiosError } from "axios";
+import round, { formatAmount } from "./format";
 declare function probe(): void;
 export const act = async (x: number): Promise<string> => {
   probe();
-  return String(x);
+  const text = isAxiosError(x) ? "" : formatAmount(round(x));
+  return text;
 };

@@ -1,14 +1,18 @@
 // Flags async exported functions in "use client" files.
 // React Client Components cannot be async — causes runtime error.
 import ts from "typescript";
-import { defineRule, hasDirective, unwrapPromiseType } from "@dfine-io-gmbh/dlint";
+import { defineRule, hasDirective, isTypeFromPackage, unwrapPromiseType } from "@dfine-io-gmbh/dlint";
+
+// React's element types: a helper returning { type, props, key } or a RefObject is no component (same list in rules-of-hooks)
+const REACT_ELEMENT_TYPES = new Set(["Element", "ReactElement", "ReactNode", "ReactPortal"]);
 
 function isJsxReturnType(type: ts.Type, checker: ts.TypeChecker): boolean {
   const unwrapped = unwrapPromiseType(type, checker);
-  if (unwrapped.isUnion()) return unwrapped.types.some(t => isJsxReturnType(t, checker));
-  if (unwrapped.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return false;
-  const props = unwrapped.getProperties();
-  return props.some(p => p.name === "type") && props.some(p => p.name === "props") && props.some(p => p.name === "key");
+  const parts = unwrapped.isUnion() && !unwrapped.aliasSymbol ? unwrapped.types : [unwrapped];
+  return parts.some((t) => {
+    const sym = t.aliasSymbol ?? t.getSymbol();
+    return !!sym && REACT_ELEMENT_TYPES.has(sym.name) && isTypeFromPackage(t, checker, "react");
+  });
 }
 
 function isComponentDeclaration(
@@ -38,7 +42,6 @@ export default defineRule({
     description: "Client Components cannot be async — causes runtime error",
   },
   check(ctx) {
-    if (!ctx.sourceFile.fileName.endsWith(".tsx")) return;
     if (!hasDirective(ctx.sourceFile, "use client")) return;
 
     for (const stmt of ctx.sourceFile.statements) {

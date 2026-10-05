@@ -1,4 +1,4 @@
-// banned-syntax — void, labels, lone-blocks, multi-str, octal, delete-var, global-assign.
+// banned-syntax — void, labels, lone-blocks, multi-str, delete-var, global-assign.
 
 // POSITIVE: void expression
 export const v = void 0; // EXPECT: banned-syntax
@@ -17,9 +17,6 @@ export function lone() {
     return x;
   }
 }
-
-// POSITIVE: octal escape sequence in string
-export const oct = "\101"; // EXPECT: banned-syntax
 
 // POSITIVE: delete on a variable identifier
 export function del() {

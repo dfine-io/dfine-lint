@@ -42,6 +42,9 @@ export {
   isNullableType,
   hasOwnToString,
   isStringType,
+  extendsLibType,
+  classOrInterfaceOf,
+  isProjectSourceFile,
   resolveSymbol,
   hasJsDocTag,
   isAssignableTo,
@@ -57,7 +60,10 @@ export {
   isDbCall,
   returnTypeHasProperties,
   isFromPackage,
+  isTypeFromPackage,
+  resolveCallee,
 } from "./helpers/detection.js";
+export type { ResolvedCallee } from "./helpers/detection.js";
 export {
   resolveCallBody,
   bodyContainsCall,
@@ -65,7 +71,7 @@ export {
   isTypeOnlyImport,
   collectValueImports,
 } from "./helpers/cross-file.js";
-export { tokenizeFile, tokenSimilarity } from "./clone/index.js";
+export { tokenizeFile, tokenSimilarity, tokenBagSimilarity } from "./clone/index.js";
 export type { TokenizedBlock } from "./clone/index.js";
 export {
   collectTypeDeclarations,

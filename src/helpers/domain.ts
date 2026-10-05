@@ -1,6 +1,7 @@
 import ts from "typescript";
 import type { TypeDeclaration, TypeDeclarationMember } from "../types.js";
 import { getExportedFunctions } from "../core/program.js";
+import { isNodeModulesDeclaration } from "./ast.js";
 
 // === Collection Primitives ===
 
@@ -32,9 +33,7 @@ export function collectTypeDeclarations(sf: ts.SourceFile, checker: ts.TypeCheck
       } else {
         // Only collect own properties — filter out inherited ones from node_modules (framework base types etc.)
         for (const prop of type.getProperties()) {
-          const decl = prop.declarations?.[0];
-          if (!decl) continue;
-          if (decl.getSourceFile().fileName.includes("node_modules")) continue;
+          if (!prop.declarations?.length || isNodeModulesDeclaration(prop)) continue;
           members.push({ name: prop.getName(), type: checker.typeToString(checker.getTypeOfSymbol(prop)) });
         }
       }

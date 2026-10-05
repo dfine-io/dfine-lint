@@ -29,6 +29,8 @@ export interface Diagnostic {
   column: number;
   message: string;
   advisory?: Advisory;
+  /** The sub-check that found it; its `ruleId:subCheckId` settings then decide the severity */
+  subCheck?: string;
 }
 
 /** Map of absolute file path -> set of exported names referenced from other files */
@@ -39,13 +41,14 @@ export interface RuleContext {
   checker: ts.TypeChecker;
   referenceIndex: ReferenceIndex;
   sourceFile: ts.SourceFile;
+  /** Absolute project root (--path or the config's directory); program.getCurrentDirectory() is the cwd instead */
+  projectRoot: string;
   /** Base directory for advisory reference files. Rules can override with absolute paths. */
   referencesDir: string;
   report: (diag: Omit<Diagnostic, "file">) => void;
-  /** Check if a specific sub-check is disabled via ruleId:subCheckId override */
+  /** Whether a sub-check is off in this file (its `ruleId:subCheckId` settings, else the rule's) */
   isSubCheckDisabled: (subCheckId: string) => boolean;
-  /** Project overrides for this rule's tunable values (config `ruleOptions[ruleId]`).
-   *  A rule reads `ctx.options.x ?? DEFAULT`, so no copy is needed to change a value. */
+  /** Project overrides for this rule's tunable values (config `ruleOptions[ruleId]`), read as `ctx.options.x ?? DEFAULT` */
   options: Record<string, unknown>;
 }
 
@@ -69,7 +72,8 @@ export interface RuleDefinition {
 
 export interface EnhancedRuleContext extends RuleContext {
   walk: (callback: (node: ts.Node) => void) => void;
-  reportAt: (node: ts.Node, message: string, advisory?: Advisory) => void;
+  /** Report at a node; pass the sub-check id so its `ruleId:subCheckId` settings decide the severity */
+  reportAt: (node: ts.Node, message: string, advisory?: Advisory, subCheck?: string) => void;
   createFix: (node: ts.Node, newText: string) => TextChange;
   insertBefore: (node: ts.Node, text: string) => TextChange;
   insertAfter: (node: ts.Node, text: string) => TextChange;
@@ -135,17 +139,16 @@ export interface CliOptions {
 export interface RuleOverride {
   ruleId: string;
   severity: Severity | "off";
-  /** Glob patterns to scope this override to specific files. If omitted, applies globally. */
+  /** Path substrings: the override applies to files whose project-relative path contains one. If omitted, globally. */
   files?: string[];
 }
 
 export interface RuleGroup {
   /** Group id; a user entry with the same id overrides the built-in group's severity. */
   id: string;
-  /** Severity applied to every member. "off" disables the whole rule (or sub-check). */
+  /** Severity applied to every member, a sub-check member included. "off" disables the member. */
   severity: Severity | "off";
-  /** Member ids: a plain rule id, or "ruleId:subCheckId" to target a single sub-check.
-   *  Optional for a user entry that only re-sets a built-in group's severity. */
+  /** Member ids, a rule id or "ruleId:subCheckId"; optional for an entry that only re-sets a built-in severity. */
   rules?: string[];
 }
 
@@ -158,12 +161,10 @@ export interface DlintConfig {
   severity?: Severity;
   /** Override severity for specific rules by id (e.g. "r34") or filename. */
   overrides?: RuleOverride[];
-  /** Named rule groups; toggle a whole set with one severity. Merged with the package's
-   *  built-in groups by id (a user entry re-sets a built-in group's severity). */
+  /** Named rule groups toggled with one severity; an entry with a built-in id re-sets that group's severity. */
   groups?: RuleGroup[];
-  /** Per-rule tunable values, keyed by rule id, e.g.
-   *  `{ "route-boundary": { allowedPairs: [["a","b"]] } }`. The rule reads them via
-   *  `ctx.options`; lets a project change a value without copying the rule. */
+  /** Per-rule tunable values by rule id, e.g. `{ "route-boundary": { allowedPairs: [["a","b"]] } }`; the rule
+   *  reads them via `ctx.options`, so a project changes a value without copying the rule. */
   ruleOptions?: Record<string, Record<string, unknown>>;
   include?: string[];
   exclude?: string[];

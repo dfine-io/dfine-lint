@@ -1,9 +1,13 @@
 // zustand-patterns — multi-field selector without useShallow + useShallow with a single field.
+import { create as createStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
 type State = { a: number; b: number };
-type UseStore = { getState(): State } & (<T>(sel: (s: State) => T) => T);
-declare const useStore: UseStore;
+// An aliased create still makes a zustand store
+const useStore = createStore<State>()(() => ({ a: 1, b: 2 }));
+// A Redux-style store also has a callable getState, but zustand does not declare it
+type UseLookalike = { getState(): State } & (<T>(sel: (s: State) => T) => T);
+declare const useLookalike: UseLookalike;
 
 // POSITIVE: multi-field selector without useShallow
 export function multi() {
@@ -18,4 +22,9 @@ export function single() {
 // NEGATIVE: single-field direct selector
 export function direct() {
   return useStore((s) => s.a);
+}
+
+// NEGATIVE: a multi-field selector on a store zustand did not create
+export function lookalike() {
+  return useLookalike((s) => ({ a: s.a, b: s.b }));
 }

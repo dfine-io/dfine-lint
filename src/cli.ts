@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { resolve, join, dirname } from "node:path";
 import { lint } from "./core/engine.js";
-import { loadConfig, loadRules } from "./config/loader.js";
+import { loadConfig, loadExtractors, loadRules } from "./config/loader.js";
 import { formatTable } from "./formatters/table.js";
 import { formatJson } from "./formatters/json.js";
 import { formatCompact } from "./formatters/compact.js";
@@ -208,11 +208,11 @@ if (!validFormats.has(opts.format)) {
   process.exit(2);
 }
 
-const { config, rules, skippedRules, disabledRules } = await (async () => {
+const { config, rules, skippedRules, disabledRules, severity } = await (async () => {
   try {
     const config = await loadConfig(opts.path, opts.configPath);
-    const { rules, skipped, disabled } = await loadRules(opts.path, config);
-    return { config, rules, skippedRules: skipped, disabledRules: disabled };
+    const { rules, skipped, disabled, severity } = await loadRules(opts.path, config);
+    return { config, rules, skippedRules: skipped, disabledRules: disabled, severity };
   } catch (err) {
     process.stderr.write(`dlint: ${(err as Error).message}\n`);
     process.exit(2);
@@ -262,12 +262,13 @@ function writeTimings(result: LintResult): void {
 
 if (opts.format === "html") {
   if (opts.fix) throw new Error("--fix cannot be combined with --format html: run --fix first, then render the report");
-  const { loadExtractors } = await import("./config/loader.js");
-  const { extract } = await import("./core/extractor.js");
-  const { formatHtml } = await import("./formatters/html.js");
-  const extractors = await loadExtractors(opts.path, config);
+  const [extractors, { extract }, { formatHtml }] = await Promise.all([
+    loadExtractors(opts.path, config),
+    import("./core/extractor.js"),
+    import("./formatters/html.js"),
+  ]);
   const extractResult = extract(opts, extractors, config);
-  const lintResult = lint(opts, rules, config);
+  const lintResult = lint(opts, rules, config, severity);
   const { html, data } = formatHtml(
     lintResult,
     extractResult,
@@ -298,15 +299,13 @@ if (opts.format === "html") {
 }
 
 if (opts.extract) {
-  const { loadExtractors } = await import("./config/loader.js");
-  const { extract } = await import("./core/extractor.js");
-  const extractors = await loadExtractors(opts.path, config);
+  const [extractors, { extract }] = await Promise.all([loadExtractors(opts.path, config), import("./core/extractor.js")]);
   const extractResult = extract(opts, extractors, config);
   process.stdout.write(JSON.stringify(extractResult, null, 2) + "\n");
   process.exit(0);
 }
 
-let result = lint(opts, rules, config);
+let result = lint(opts, rules, config, severity);
 
 if (opts.fix && result.fixableCount > 0) {
   const { applyFixes } = await import("./core/fixer.js");
@@ -325,7 +324,7 @@ if (opts.fix && result.fixableCount > 0) {
     }
   } else if (totalApplied > 0) {
     // Report what is left after the fixes: lint the same file set again
-    result = lint(opts, rules, config);
+    result = lint(opts, rules, config, severity);
   }
 }
 if (skippedRules.length > 0) result.skippedRules = skippedRules;

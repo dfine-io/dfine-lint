@@ -3,7 +3,7 @@
 // Objects/arrays use reference equality — identical-looking objects cause cache misses.
 // Branded types (string & $brand<T>) are runtime primitives and pass this check.
 import ts from "typescript";
-import { defineRule, isNodeModulesDeclaration, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 const PRIMITIVE_FLAGS =
   ts.TypeFlags.String |
@@ -29,13 +29,9 @@ export default defineRule({
   },
   check(ctx) {
     ctx.walk((node) => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "cache"
-      ) {
-        const cacheSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!cacheSym || !isNodeModulesDeclaration(resolveSymbol(ctx.checker, cacheSym))) return;
+      if (ts.isCallExpression(node)) {
+        const callee = resolveCallee(node, ctx.checker);
+        if (callee?.packageName !== "react" || callee.name !== "cache") return;
         const arg = node.arguments[0];
         if (arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))) {
           for (const param of arg.parameters) {

@@ -28,3 +28,13 @@ export const c = (42).toString();
 
 // NEGATIVE: string + string
 export const d = "a" + "b";
+
+// POSITIVE: a function prints its source, never a value
+declare const handler: () => void;
+export const j = "fn: " + handler; // EXPECT: no-base-to-string
+
+// NEGATIVE: a tuple prints its elements; an Error subclass prints name and message
+declare const pair: [number, number];
+export const k = "pair: " + pair;
+class AppError extends Error {}
+export const l = "err: " + new AppError("x");

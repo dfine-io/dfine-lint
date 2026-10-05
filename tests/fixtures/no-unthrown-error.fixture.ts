@@ -30,3 +30,17 @@ export function ok4(log: (e: Error) => void) {
 export function ok5() {
   new Date(); // not an Error
 }
+
+// POSITIVE: a generic subclass of Error
+class DetailError<T> extends Error {
+  constructor(readonly detail: T) { super("detail"); }
+}
+export function bad3() {
+  new DetailError(1); // EXPECT: no-unthrown-error
+}
+
+// NEGATIVE: a local class named Error is not the lib Error
+export function localError() {
+  class Error { constructor() { void 0; } }
+  new Error();
+}

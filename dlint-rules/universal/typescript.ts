@@ -4,8 +4,6 @@
 import ts from "typescript";
 import { defineRule, isBuiltinCollection, isStringType } from "@dfine-io-gmbh/dlint";
 
-const VALID_PROP_NAME = /^[a-zA-Z_$]/;
-
 export default defineRule({
   meta: {
     category: "quality",
@@ -48,7 +46,7 @@ export default defineRule({
           (annotatedType.flags & (ts.TypeFlags.String | ts.TypeFlags.Number | ts.TypeFlags.Boolean))
         ) {
           const typeName = ctx.checker.typeToString(annotatedType);
-          ctx.reportAt(node.type, `Type '${typeName}' is inferrable — remove annotation`, { action: "remove-inferrable-type", pattern: "Remove inferrable type annotation", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html", fix: { start: node.name.getEnd(), length: node.type!.getEnd() - node.name.getEnd(), newText: "" } });
+          ctx.reportAt(node.type, `Type '${typeName}' is inferrable — remove annotation`, { action: "remove-inferrable-type", pattern: "Remove inferrable type annotation", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html", fix: { start: node.name.getEnd(), length: node.type.getEnd() - node.name.getEnd(), newText: "" } }, "no-inferrable-types");
         }
       }
 
@@ -74,7 +72,7 @@ export default defineRule({
             ancestor = ancestor.parent;
           }
           if (!guarded) {
-            ctx.reportAt(node, `Add null check for '${node.expression.getText(ctx.sourceFile).slice(0, 20)}' -- property access on nullable type`, { action: "add-null-guard", pattern: "Use expr?.property or add null guard", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" });
+            ctx.reportAt(node, `Add null check for '${node.expression.getText(ctx.sourceFile).slice(0, 20)}' -- property access on nullable type`, { action: "add-null-guard", pattern: "Use expr?.property or add null guard", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" }, "null-check");
           }
         }
       }
@@ -109,16 +107,11 @@ export default defineRule({
         ) {
           const indexInfo = ctx.checker.getIndexInfosOfType(objType);
           if (indexInfo.length === 0 && !objType.isUnion()) {
-            // Skip: key type is a subtype of the object's property keys (Record<K,V>, enum access)
+            // Skip: every key the index can take names a declared property (Record<K,V>, enum access)
             const keyType = ctx.checker.getTypeAtLocation(node.argumentExpression);
-            const props = objType.getProperties();
-            if (props.length > 0) {
-              const allLiteral = props.every((p) => VALID_PROP_NAME.test(p.name));
-              const keyIsLiteral = keyType.isStringLiteral() || keyType.isNumberLiteral() ||
-                (keyType.isUnion() && keyType.types.every((t) => t.isStringLiteral() || t.isNumberLiteral()));
-              if (allLiteral && keyIsLiteral) return;
-            }
-            ctx.reportAt(node, "Add index signature or use Map<K,V> -- index access may return undefined", { action: "add-index-signature", pattern: "Add index signature or use Map<K,V>", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" });
+            const keys = keyType.isUnion() ? keyType.types : [keyType];
+            if (keys.every((t) => (t.isStringLiteral() || t.isNumberLiteral()) && objType.getProperty(String(t.value)) !== undefined)) return;
+            ctx.reportAt(node, "Add index signature or use Map<K,V> -- index access may return undefined", { action: "add-index-signature", pattern: "Add index signature or use Map<K,V>", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" }, "unsafe-index");
           }
         }
       }
@@ -161,16 +154,16 @@ export default defineRule({
       }
 
       // no-non-null-assertion: x! → use null check or ?.
-      if (!offNonNull && ts.isNonNullExpression(node) && !ctx.sourceFile.fileName.endsWith(".d.ts")) {
-        ctx.reportAt(node, `Non-null assertion on '${node.expression.getText(ctx.sourceFile).slice(0, 30)}' — use ?. or null check`, { action: "remove-non-null", pattern: "Use expr?.property instead of expr!.property", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" });
+      if (!offNonNull && ts.isNonNullExpression(node) && !ctx.sourceFile.isDeclarationFile) {
+        ctx.reportAt(node, `Non-null assertion on '${node.expression.getText(ctx.sourceFile).slice(0, 30)}' — use ?. or null check`, { action: "remove-non-null", pattern: "Use expr?.property instead of expr!.property", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" }, "no-non-null-assertion");
       }
 
       // no-explicit-any: any keyword in type annotations
-      if (!offNoAny && node.kind === ts.SyntaxKind.AnyKeyword && !ctx.sourceFile.fileName.endsWith(".d.ts")) {
+      if (!offNoAny && node.kind === ts.SyntaxKind.AnyKeyword && !ctx.sourceFile.isDeclarationFile) {
         // Skip: catch variable type — handled by catch-unknown check above
         // AST: AnyKeyword → VariableDeclaration → CatchClause
         if (ts.isVariableDeclaration(node.parent) && node.parent.parent && ts.isCatchClause(node.parent.parent)) return;
-        ctx.reportAt(node, "Explicit 'any' — use 'unknown' or specific type", { action: "replace-any", pattern: "Use unknown or a specific type instead of any", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" });
+        ctx.reportAt(node, "Explicit 'any' — use 'unknown' or specific type", { action: "replace-any", pattern: "Use unknown or a specific type instead of any", reference: "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html" }, "no-explicit-any");
       }
     });
   },

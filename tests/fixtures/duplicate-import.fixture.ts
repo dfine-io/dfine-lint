@@ -10,6 +10,14 @@ import type { Program } from "typescript";
 // NEGATIVE: a single import from a different module (no duplicate)
 import { isAbsolute } from "node:path";
 
-export const _ = [ts.SyntaxKind.Unknown, SyntaxKind.Unknown, isAbsolute("/"), tsAgain.version];
+// fs and node:fs are one module: two module symbols with one export set
+import { readFileSync } from "fs";
+import { writeFileSync } from "node:fs"; // EXPECT: duplicate-import
+
+// NEGATIVE: one wildcard module ("*.css") stands for two different files, even with equal exports
+import aStyles from "./a.css";
+import bStyles from "./b.css";
+
+export const _ = [ts.SyntaxKind.Unknown, SyntaxKind.Unknown, isAbsolute("/"), tsAgain.version, readFileSync, writeFileSync, aStyles, bStyles];
 export type AnyNode = Node;
 export type AnyProgram = Program;

@@ -19,6 +19,8 @@ export default {
   overrides: [
     // index.ts files are public API barrels — re-exports are intentional there
     { ruleId: "no-re-export", severity: "off", files: ["index.ts"] },
+    // the barrels keep exporting the deprecated SDK helpers until 2.0 removes them
+    { ruleId: "deprecated-usage", severity: "off", files: ["src/index.ts", "src/clone/index.ts"] },
     // no-multiline-comments is a downstream style convention, not the SDK's own
     { ruleId: "no-multiline-comments", severity: "off" },
     // tooling code has inherent magic numbers (SyntaxKind values, byte/size math, thresholds)

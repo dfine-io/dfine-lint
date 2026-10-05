@@ -1,9 +1,9 @@
 // Flags fs path APIs called with a parameter-derived path (path-traversal surface).
 // Only the documented path-first fs methods are matched; fd-based methods are excluded.
-// Allows static path literals. Self-contained: resolves the callee symbol to fs (alias-proof) +
+// Allows static path literals. Self-contained: resolves the callee into Node's fs module (alias-proof) +
 // inlines parameter-taint.
 import ts from "typescript";
-import { defineRule, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -57,25 +57,14 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (!ts.isCallExpression(node) || node.arguments.length === 0) return;
-      const callee = node.expression;
-      let nameId: ts.Identifier | undefined;
-      if (ts.isIdentifier(callee)) nameId = callee;
-      else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name))
-        nameId = callee.name;
-      if (!nameId) return;
-      const sym = checker.getSymbolAtLocation(nameId);
-      if (!sym) return;
-      const resolved = resolveSymbol(checker, sym);
-      if (!fsPathMethods.has(resolved.name)) return;
-      const fromFs = (resolved.declarations ?? []).some((decl) =>
-        /\/@types\/node\/fs(?:\/promises)?\.d\.ts$/.test(decl.getSourceFile().fileName),
-      );
-      if (!fromFs) return;
+      const callee = resolveCallee(node, checker);
+      if (!callee || !fsPathMethods.has(callee.name)) return;
+      if (callee.moduleName !== "fs" && callee.moduleName !== "fs/promises") return;
       const path = node.arguments[0];
       if (!path || !tracesToParameter(path)) return;
       ctx.reportAt(
         path,
-        `Path traversal: ${resolved.name}() with a parameter-derived path — resolve within a fixed base dir or validate against an allowlist`,
+        `Path traversal: ${callee.name}() with a parameter-derived path — resolve within a fixed base dir or validate against an allowlist`,
         {
           action: "validate-path",
           pattern: "Resolve the path and verify it stays within a fixed base directory",

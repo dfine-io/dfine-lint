@@ -1,9 +1,7 @@
-// Flags multiple import declarations resolving to the same physical file.
-// Prevents import fragmentation that makes dependencies harder to track.
-// Groups type-only and value imports apart: a type-only import beside value imports is exempt,
-// duplicates within each kind still count.
+// Flags two imports of one module: the same file, or ambient modules with one export set (fs, node:fs).
+// Type-only and value imports group apart, so an import type beside value imports is no duplicate.
 import ts from "typescript";
-import { defineRule, isTypeOnlyImport, resolveImportedModule } from "@dfine-io-gmbh/dlint";
+import { defineRule, isTypeOnlyImport, resolveImportedModule, resolveSymbol } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -17,6 +15,22 @@ export default defineRule({
     const imports = new Map<string, ImportEntry[]>();
     const options = ctx.program.getCompilerOptions();
     const typeOnly = (d: ImportEntry): boolean => isTypeOnlyImport(d, options);
+    // A builtin has no file: "fs" and "node:fs" are two module symbols with one export set.
+    // One wildcard symbol ("*.css") stands for many files, so equal sets only merge distinct symbols.
+    const ambient: { module: ts.Symbol; exports: ReadonlySet<ts.Symbol>; key: string }[] = [];
+    const moduleKey = (specifier: ts.StringLiteral): string => {
+      const file = resolveImportedModule(ctx.program, specifier)?.resolvedFileName;
+      if (file) return file;
+      const module = ctx.checker.getSymbolAtLocation(specifier);
+      if (!module) return specifier.text;
+      const exports = new Set(ctx.checker.getExportsOfModule(module).map((s) => resolveSymbol(ctx.checker, s)));
+      const same = exports.size > 0
+        ? ambient.find((a) => a.module !== module && a.exports.size === exports.size && [...exports].every((s) => a.exports.has(s)))
+        : undefined;
+      const key = same?.key ?? specifier.text;
+      ambient.push({ module, exports, key });
+      return key;
+    };
 
     ts.forEachChild(ctx.sourceFile, (node) => {
       if (
@@ -24,9 +38,7 @@ export default defineRule({
         ts.isStringLiteral(node.moduleSpecifier)
       ) {
         const entry = node as ImportEntry;
-        const key =
-          (resolveImportedModule(ctx.program, entry.moduleSpecifier)?.resolvedFileName ??
-          entry.moduleSpecifier.text) + (typeOnly(entry) ? "\0type" : "");
+        const key = moduleKey(entry.moduleSpecifier) + (typeOnly(entry) ? "\0type" : "");
         const existing = imports.get(key);
         if (existing) existing.push(entry);
         else imports.set(key, [entry]);

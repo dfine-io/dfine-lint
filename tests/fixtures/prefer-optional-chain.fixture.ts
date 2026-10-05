@@ -23,3 +23,9 @@ export const n1 = o.b && p;
 
 // NEGATIVE: plain boolean &&
 export const n2 = x && y;
+
+// NEGATIVE: a local binding named undefined holds a value, so q != undefined is no null check
+export function shadowedUndefined(q: { b: number } | null) {
+  const undefined = 0;
+  return q != undefined && q.b;
+}

@@ -7,7 +7,7 @@ import {
   defineRule,
   hasDirective,
   getExportedFunctions,
-  isLibDeclaration,
+  resolveCallee,
 } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
@@ -42,13 +42,11 @@ export default defineRule({
       if (
         inExported &&
         ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "fetch" &&
         node.arguments.length > 0
       ) {
-        // Verify fetch is the global, not a local function
-        const fetchSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!fetchSym || !isLibDeclaration(fetchSym)) {
+        // The global fetch (TS lib DOM or @types/node), globalThis.fetch included; a local fetch helper is not it
+        const callee = resolveCallee(node, ctx.checker);
+        if (!callee?.global || callee.name !== "fetch") {
           ts.forEachChild(node, (c) => walkNode(c, inExported));
           return;
         }
@@ -77,21 +75,10 @@ export default defineRule({
           ts.forEachChild(node, (c) => walkNode(c, inExported));
           return;
         }
-        // Allow: property access only if root is NOT a function parameter
-        if (ts.isPropertyAccessExpression(urlArg)) {
-          let root: ts.Expression = urlArg;
-          while (ts.isPropertyAccessExpression(root)) root = root.expression;
-          if (ts.isIdentifier(root)) {
-            const sym = ctx.checker.getSymbolAtLocation(root);
-            const decl = sym?.valueDeclaration;
-            if (!decl || !ts.isParameter(decl)) {
-              ts.forEachChild(node, (c) => walkNode(c, inExported));
-              return;
-            }
-          } else {
-            ts.forEachChild(node, (c) => walkNode(c, inExported));
-            return;
-          }
+        // Allow: property access only if not derived from a parameter, through variables too (const p = params; p.url)
+        if (ts.isPropertyAccessExpression(urlArg) && !isParameterDerived(urlArg)) {
+          ts.forEachChild(node, (c) => walkNode(c, inExported));
+          return;
         }
         ctx.reportAt(
           node,

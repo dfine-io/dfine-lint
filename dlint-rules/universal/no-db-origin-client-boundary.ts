@@ -1,7 +1,6 @@
 // Flags DB-origin types (Drizzle row types) crossing a client boundary.
-// Heuristic-free + deterministic: no path/field-name match, no curated list.
-// Intrinsic signal = the Drizzle row API itself: a type alias `typeof <table>.$inferSelect`
-// ($inferInsert / InferSelectModel / InferInsertModel). Scales automatically to every new table.
+// Signal = the Drizzle row API, verified by package identity: `typeof <table>.$inferSelect`
+// ($inferInsert alike) on a drizzle-orm table, or drizzle-orm's InferSelectModel / InferInsertModel.
 //
 // Why an AST graph instead of a type-checker walk: TS discards the row alias on use (the
 // $inferSelect property symbols point into Drizzle's node_modules), so the row origin is only
@@ -9,7 +8,7 @@
 // (reference -> alias decl -> member / intersection / type-arg) and report once a node is a
 // $inferSelect derivation.
 import ts from "typescript";
-import { defineRule, hasDirective, getExportedFunctions, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, hasDirective, getExportedFunctions, isFromPackage, isTypeFromPackage, resolveSymbol } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -18,18 +17,23 @@ const ROW_QUERY_NAMES = new Set(["$inferSelect", "$inferInsert"]);
 const ROW_MODEL_NAMES = new Set(["InferSelectModel", "InferInsertModel"]);
 // ===========================================================================
 
-function rightName(name: ts.EntityName): string {
-  return ts.isQualifiedName(name) ? name.right.text : name.text;
+function rightIdentifier(name: ts.EntityName): ts.Identifier {
+  return ts.isQualifiedName(name) ? name.right : name;
 }
 
-// `typeof table.$inferSelect` (TypeQuery) or `(typeof table)["$inferSelect"]` (IndexedAccess).
-function isRowQueryNode(node: ts.TypeNode, rowQueryNames: Set<string>): boolean {
-  if (ts.isTypeQueryNode(node)) return rowQueryNames.has(rightName(node.exprName));
+// `typeof table.$inferSelect` (TypeQuery) or `(typeof table)["$inferSelect"]` (IndexedAccess) on a drizzle-orm table;
+// the TypeQuery names a member symbol (isFromPackage), the indexed form only a string, so its table type decides
+function isRowQueryNode(node: ts.TypeNode, checker: ts.TypeChecker, rowQueryNames: Set<string>): boolean {
+  if (ts.isTypeQueryNode(node)) {
+    const right = rightIdentifier(node.exprName);
+    return rowQueryNames.has(right.text) && isFromPackage(right, checker, "drizzle-orm");
+  }
   if (ts.isIndexedAccessTypeNode(node) && ts.isTypeQueryNode(node.objectType)) {
     return (
       ts.isLiteralTypeNode(node.indexType) &&
       ts.isStringLiteral(node.indexType.literal) &&
-      rowQueryNames.has(node.indexType.literal.text)
+      rowQueryNames.has(node.indexType.literal.text) &&
+      isTypeFromPackage(checker.getTypeFromTypeNode(node.objectType), checker, "drizzle-orm")
     );
   }
   return false;
@@ -37,7 +41,7 @@ function isRowQueryNode(node: ts.TypeNode, rowQueryNames: Set<string>): boolean 
 
 // DFS over the written type-annotation graph. seen = symbol cycle guard.
 function nodeReachesRow(node: ts.TypeNode, checker: ts.TypeChecker, seen: Set<ts.Symbol>, rowQueryNames: Set<string>, rowModelNames: Set<string>): boolean {
-  if (isRowQueryNode(node, rowQueryNames)) return true;
+  if (isRowQueryNode(node, checker, rowQueryNames)) return true;
 
   if (ts.isParenthesizedTypeNode(node)) return nodeReachesRow(node.type, checker, seen, rowQueryNames, rowModelNames);
   if (ts.isArrayTypeNode(node)) return nodeReachesRow(node.elementType, checker, seen, rowQueryNames, rowModelNames);
@@ -48,12 +52,12 @@ function nodeReachesRow(node: ts.TypeNode, checker: ts.TypeChecker, seen: Set<ts
     return node.members.some((m) => ts.isPropertySignature(m) && m.type !== undefined && nodeReachesRow(m.type, checker, seen, rowQueryNames, rowModelNames));
   }
   if (ts.isTypeReferenceNode(node)) {
-    // InferSelectModel<typeof table> / InferInsertModel<...> - Drizzle row API without the $inferSelect suffix.
-    if (rowModelNames.has(rightName(node.typeName))) return true;
+    const symbol = checker.getSymbolAtLocation(node.typeName);
+    // InferSelectModel<typeof table> / InferInsertModel<...> from drizzle-orm, under any import alias
+    if (symbol && rowModelNames.has(resolveSymbol(checker, symbol).name) && isFromPackage(rightIdentifier(node.typeName), checker, "drizzle-orm")) return true;
     // Generic wrappers (Promise / Array / Pick / Omit / Readonly / ...) - search type args without heuristics.
     if (node.typeArguments?.some((a) => nodeReachesRow(a, checker, seen, rowQueryNames, rowModelNames))) return true;
     // Resolve the alias and follow its declaration (reference -> alias body).
-    const symbol = checker.getSymbolAtLocation(node.typeName);
     return symbol !== undefined && symbolReachesRow(symbol, checker, seen, rowQueryNames, rowModelNames);
   }
   return false;

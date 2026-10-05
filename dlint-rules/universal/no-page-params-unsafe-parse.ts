@@ -1,20 +1,9 @@
-// Blocks `Schema.parse(x)` in Next.js Page/Layout Components when `x` originates
-// from the `params` or `searchParams` destructuring -- those are URL trust boundaries
-// and `.parse()` throws on invalid input, crashing the page (500) instead of routing
-// to notFound() (404). Use a safe-parse helper that calls notFound() on failure
-// instead of Schema.parse().
-//
-// Detection is 100% TypeChecker + Compiler API:
-//   1. Is default export function a Next.js Page? -> Props type has `params` or
-//      `searchParams` property (Symbol-based getProperty, no string match on source).
-//   2. Is receiver a Zod schema? -> Type has both `parse` and `safeParse` methods
-//      (structural shape match via TypeChecker, no name heuristic).
-//   3. Does arg originate from page params binding? -> Recursive Symbol resolution
-//      through VariableDeclaration initializers, BindingElement parent walks, and
-//      Promise.all([params, searchParams]) array destructuring -- transitive closure
-//      from arg Identifier back to the page-function param Symbol.
+// Blocks a throwing Zod parse of Next.js page params: invalid URL input must reach notFound(), not a 500.
+// Zod and Promise.all resolve through resolveCallee; the params origin follows symbols transitively.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
+
+const THROWING_PARSE_NAMES = new Set(["parse", "parseAsync"]);
 
 function isNextJsPageFunction(fn: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): boolean {
   if (fn.parameters.length === 0) return false;
@@ -43,9 +32,11 @@ function collectPageParamSymbols(
   return symbols;
 }
 
-function isZodSchemaReceiver(receiver: ts.Expression, checker: ts.TypeChecker): boolean {
-  const type = checker.getTypeAtLocation(receiver);
-  return !!type.getProperty("parse") && !!type.getProperty("safeParse");
+// The input a throwing zod parse reads: schema.parse(x) reads x, the exported z.parse(schema, x) reads its 2nd argument
+function throwingParseInput(node: ts.CallExpression, checker: ts.TypeChecker): ts.Expression | undefined {
+  const callee = resolveCallee(node, checker);
+  if (callee?.packageName !== "zod" || !THROWING_PARSE_NAMES.has(callee.name)) return undefined;
+  return callee.symbol.flags & ts.SymbolFlags.Variable ? node.arguments[1] : node.arguments[0];
 }
 
 function unwrapExpression(node: ts.Node): ts.Node {
@@ -89,10 +80,8 @@ function expressionOriginatesFromParams(
   const unwrapped = unwrapExpression(expr);
   // Promise.all([params, searchParams]) -> any element from paramSymbols counts
   if (ts.isCallExpression(unwrapped)) {
-    if (
-      ts.isPropertyAccessExpression(unwrapped.expression) &&
-      unwrapped.expression.name.text === "all"
-    ) {
+    const callee = resolveCallee(unwrapped, checker);
+    if (callee?.lib && callee.name === "all") {
       for (const callArg of unwrapped.arguments) {
         if (ts.isArrayLiteralExpression(callArg)) {
           for (const element of callArg.elements) {
@@ -156,13 +145,8 @@ export default defineRule({
       if (paramSymbols.size === 0) continue;
 
       function visit(node: ts.Node): void {
-        if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === "parse" &&
-          isZodSchemaReceiver(node.expression.expression, checker)
-        ) {
-          const arg = node.arguments[0];
+        if (ts.isCallExpression(node)) {
+          const arg = throwingParseInput(node, checker);
           if (arg && expressionOriginatesFromParams(arg, checker, paramSymbols, new Set())) {
             ctx.reportAt(
               node,

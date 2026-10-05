@@ -1,2 +1,2 @@
-export { tokenizeFile, tokenSimilarity } from "./tokenize.js";
+export { tokenizeFile, tokenSimilarity, tokenBagSimilarity } from "./tokenize.js";
 export type { TokenizedBlock } from "./tokenize.js";

@@ -12,12 +12,7 @@ export default defineRule({
   check(ctx) {
     ctx.walk((node) => {
       if (ts.isAsExpression(node)) {
-        if (
-          ts.isTypeReferenceNode(node.type) &&
-          ts.isIdentifier(node.type.typeName) &&
-          node.type.typeName.text === "const"
-        )
-          return;
+        if (ts.isConstTypeReference(node.type)) return;
         const exprType = ctx.checker.getTypeAtLocation(node.expression);
         const assertedType = ctx.checker.getTypeAtLocation(node);
         if (

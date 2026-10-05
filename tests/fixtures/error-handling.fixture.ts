@@ -34,5 +34,24 @@ export function withCause() {
   }
 }
 
+// A lib error subclass whose constructor takes { cause } counts like Error
+export function typeErrorNoCause() {
+  try {
+    JSON.parse("{}");
+  } catch (e) {
+    throw new TypeError("failed");
+  }
+}
+
+// NEGATIVE: DOMException's second parameter is a name, it takes no { cause }
+export function domException() {
+  try {
+    JSON.parse("{}");
+  } catch (e) {
+    throw new DOMException("failed");
+  }
+}
+
 // EXPECT: error-handling@8
 // EXPECT: error-handling@15
+// EXPECT: error-handling@42

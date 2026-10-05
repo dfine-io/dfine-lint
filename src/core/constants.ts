@@ -9,5 +9,7 @@ export const GIT_MAX_BUFFER = 10 * 1024 * 1024;
 export const GIT_TIMEOUT_MS = 10_000;
 // Directory of the bundled TypeScript lib.*.d.ts files (typescript.d.ts lives there too)
 export const TS_LIB_DIR = dirname(ts.getDefaultLibFilePath({}));
-// Universal rules shipped with the package, two levels above build/core
-export const BUNDLED_RULES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dlint-rules", "universal");
+// The installed package, two levels above build/core
+export const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Universal rules shipped with the package
+export const BUNDLED_RULES_DIR = join(PACKAGE_ROOT, "dlint-rules", "universal");

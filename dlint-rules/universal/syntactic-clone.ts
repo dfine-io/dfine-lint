@@ -5,8 +5,9 @@
 import ts from "typescript";
 import {
   defineRule,
+  isProjectSourceFile,
   tokenizeFile,
-  tokenSimilarity,
+  tokenBagSimilarity,
   type TokenizedBlock,
 } from "@dfine-io-gmbh/dlint";
 
@@ -65,7 +66,7 @@ const clonePairsCache = new WeakMap<ts.Program, ClonePair[]>();
 function buildCloneMap(program: ts.Program, minCloneSimilarity: number, minStatements: number): ClonePair[] {
   const allBlocks: TokenizedBlock[] = [];
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     for (const block of tokenizeFile(sf)) {
       if (block.stmtCount >= minStatements) allBlocks.push(block);
     }
@@ -79,9 +80,11 @@ function buildCloneMap(program: ts.Program, minCloneSimilarity: number, minState
       if (!a || !b) continue;
       if (a.file === b.file) continue;
       if (areDifferentRoutes(a.file, b.file)) continue;
-      const lenRatio = Math.min(a.tokens.length, b.tokens.length) / Math.max(a.tokens.length, b.tokens.length);
-      if (lenRatio < 0.6) continue;
-      const sim = tokenSimilarity(a.tokens, b.tokens);
+      // Multiset Jaccard never exceeds (shorter-1)/(longer-1) bigrams: an exact bound that skips most pairs
+      const bound = (Math.min(a.tokens.length, b.tokens.length) - 1) / (Math.max(a.tokens.length, b.tokens.length) - 1);
+      if (bound < minCloneSimilarity) continue;
+      // Repeats count: a run of seed() calls matches another run only as long as the counts agree
+      const sim = tokenBagSimilarity(a.tokens, b.tokens);
       if (sim >= minCloneSimilarity) pairs.push({ a, b, similarity: sim });
     }
   }

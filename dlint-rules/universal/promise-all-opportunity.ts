@@ -2,27 +2,59 @@
 // Tracks transitive dependencies via symbol analysis across statement boundaries.
 // Severity: warning — semantic ordering (audit-after-mutation) must be decided by developer.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
+import { defineRule, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 type AwaitInfo = {
   stmt: ts.Statement;
-  declSymbol: ts.Symbol | null;
+  // Every name the await binds, destructured ones included; empty for a bare `await f();`
+  declSymbols: ts.Symbol[];
   awaitExpr: ts.AwaitExpression;
 };
+
+function boundSymbols(name: ts.BindingName, checker: ts.TypeChecker): ts.Symbol[] {
+  if (ts.isIdentifier(name)) {
+    const sym = checker.getSymbolAtLocation(name);
+    return sym ? [sym] : [];
+  }
+  return name.elements.flatMap((el) => (ts.isOmittedExpression(el) ? [] : boundSymbols(el.name, checker)));
+}
 
 function extractAwait(stmt: ts.Statement, checker: ts.TypeChecker): AwaitInfo | null {
   if (ts.isVariableStatement(stmt)) {
     for (const decl of stmt.declarationList.declarations) {
-      if (decl.initializer && ts.isAwaitExpression(decl.initializer) && ts.isIdentifier(decl.name)) {
-        const sym = checker.getSymbolAtLocation(decl.name);
-        return { stmt, declSymbol: sym ?? null, awaitExpr: decl.initializer };
+      if (decl.initializer && ts.isAwaitExpression(decl.initializer)) {
+        return { stmt, declSymbols: boundSymbols(decl.name, checker), awaitExpr: decl.initializer };
       }
     }
   }
   if (ts.isExpressionStatement(stmt) && ts.isAwaitExpression(stmt.expression)) {
-    return { stmt, declSymbol: null, awaitExpr: stmt.expression };
+    return { stmt, declSymbols: [], awaitExpr: stmt.expression };
   }
   return null;
+}
+
+// What a call reads: its arguments and the root of its receiver (this.db roots at db), never the callee name itself
+function inputSymbols(expr: ts.Expression, checker: ts.TypeChecker): ts.Symbol[] {
+  if (!ts.isCallExpression(expr)) return [];
+  const roots: ts.Node[] = [...expr.arguments];
+  if (ts.isPropertyAccessExpression(expr.expression)) roots.push(expr.expression.expression);
+  const symbols: ts.Symbol[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(n) && n.expression.kind === ts.SyntaxKind.ThisKeyword) {
+      const member = checker.getSymbolAtLocation(n.name);
+      if (member) symbols.push(member);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(n)) return visit(n.expression);
+    if (ts.isIdentifier(n)) {
+      const sym = valueSymbolOf(n, checker);
+      if (sym) symbols.push(sym);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  roots.forEach(visit);
+  return symbols;
 }
 
 function usesSymbol(node: ts.Node, target: ts.Symbol, checker: ts.TypeChecker): boolean {
@@ -62,46 +94,34 @@ export default defineRule({
     });
 
     function describeExpr(e: ts.Expression): string {
+      // import("x") names its specifier; its type would print the resolved absolute path
+      if (ts.isCallExpression(e) && e.expression.kind === ts.SyntaxKind.ImportKeyword)
+        return `import(${e.arguments[0]?.getText() ?? ""})`;
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression))
         return `${e.expression.text}(...)`;
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression))
         return `${ts.isIdentifier(e.expression.expression) ? e.expression.expression.text + "." : ""}${e.expression.name.text}(...)`;
-      return ctx.checker.typeToString(ctx.checker.getTypeAtLocation(e)).slice(0, 40);
+      // Source text, not the type: a type string can carry an absolute import path
+      return (e.getText().split("\n")[0] ?? "").slice(0, 40);
     }
 
     function checkChain(chain: AwaitInfo[]): void {
       if (chain.length < 2) return;
       const head = chain[0];
       if (!head) return;
-      let parent = head.stmt.parent;
-      while (parent) {
+      // A try around the chain orders its failures; the walk stops at the function the chain runs in
+      for (let parent = head.stmt.parent; !ts.isFunctionLike(parent) && !ts.isSourceFile(parent); parent = parent.parent) {
         if (ts.isTryStatement(parent) || ts.isCatchClause(parent)) return;
-        if (ts.isBlock(parent) && parent.parent && ts.isTryStatement(parent.parent)) return;
-        parent = parent.parent;
       }
 
       for (let i = 0; i < chain.length - 1; i++) {
         const first = chain[i];
         const second = chain[i + 1];
         if (!first || !second) continue;
-        if (first.declSymbol && usesSymbol(second.awaitExpr, first.declSymbol, ctx.checker))
-          continue;
-        let transitiveDependent = false;
-        const block = first.stmt.parent;
-        if (ts.isBlock(block)) {
-          for (const s of block.statements) {
-            if (s === second.stmt) break;
-            if (ts.isVariableStatement(s)) {
-              for (const d of s.declarationList.declarations) {
-                if (ts.isIdentifier(d.name)) {
-                  const sym = ctx.checker.getSymbolAtLocation(d.name);
-                  if (sym && usesSymbol(second.awaitExpr, sym, ctx.checker)) transitiveDependent = true;
-                }
-              }
-            }
-          }
-        }
-        if (transitiveDependent) continue;
+        const reads = (s: ts.Symbol): boolean => usesSymbol(second.awaitExpr, s, ctx.checker);
+        if (first.declSymbols.some(reads)) continue;
+        // A bare await runs only for its effect; when the next call reads the same input, the order is observable
+        if (first.declSymbols.length === 0 && inputSymbols(first.awaitExpr.expression, ctx.checker).some(reads)) continue;
         ctx.reportAt(
           second.stmt,
           `Sequential awaits could be Promise.all: ${describeExpr(first.awaitExpr.expression)} + ${describeExpr(second.awaitExpr.expression)}`,

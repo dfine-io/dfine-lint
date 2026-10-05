@@ -31,3 +31,14 @@ const STATIC = "^abc$";
 export function constPattern() {
   return new RegExp(STATIC);
 }
+
+// POSITIVE: globalThis.RegExp is the lib RegExp
+export function viaGlobal(p: string) {
+  return new globalThis.RegExp(p); // EXPECT: no-non-literal-regexp
+}
+
+// NEGATIVE: a local class named RegExp compiles no pattern
+export function localClass(p: string) {
+  class RegExp { constructor(readonly source: string) {} }
+  return new RegExp(p);
+}

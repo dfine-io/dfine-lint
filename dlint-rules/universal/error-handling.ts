@@ -2,7 +2,7 @@
 // and re-throw without error cause chain for debugging.
 // Proper error handling preserves stack traces and error context.
 import ts from "typescript";
-import { defineRule, isLibDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -27,11 +27,15 @@ export default defineRule({
         for (const stmt of node.block.statements) {
           if (
             ts.isThrowStatement(stmt) && stmt.expression &&
-            ts.isNewExpression(stmt.expression) && ts.isIdentifier(stmt.expression.expression) &&
-            stmt.expression.expression.text === "Error" && stmt.expression.arguments?.length === 1
+            ts.isNewExpression(stmt.expression) && stmt.expression.arguments?.length === 1
           ) {
-            const errSym = ctx.checker.getSymbolAtLocation(stmt.expression.expression);
-            if (errSym && isLibDeclaration(errSym)) {
+            // A lib error class whose constructor takes { cause } second (Error, TypeError …; not DOMException)
+            const created = stmt.expression;
+            const takesCause = (): boolean => ctx.checker.getTypeAtLocation(created.expression).getConstructSignatures().some((sig) => {
+              const options = sig.getParameters()[1];
+              return !!options && ctx.checker.getNonNullableType(ctx.checker.getTypeOfSymbol(options)).getProperty("cause") !== undefined;
+            });
+            if (resolveCallee(created, ctx.checker)?.lib && takesCause()) {
               ctx.reportAt(stmt, "Add { cause: original } to new Error re-throw for error chain", { action: "use-error-cause", pattern: "Wrap message with { cause: error } in new Error constructor", reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause" });
             }
           }

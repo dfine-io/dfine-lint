@@ -5,20 +5,6 @@
 import ts from "typescript";
 import { defineRule, isAssignableTo } from "@dfine-io-gmbh/dlint";
 
-function isConstAssertion(typeNode: ts.TypeNode): boolean {
-  if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
-    return typeNode.typeName.text === "const";
-  }
-  return false;
-}
-
-function isUnknownOrAnyType(typeNode: ts.TypeNode): boolean {
-  return (
-    typeNode.kind === ts.SyntaxKind.UnknownKeyword ||
-    typeNode.kind === ts.SyntaxKind.AnyKeyword
-  );
-}
-
 export default defineRule({
   meta: {
     category: "quality",
@@ -34,8 +20,7 @@ export default defineRule({
       ) {
         return;
       }
-      if (isConstAssertion(node.type)) return;
-      if (isUnknownOrAnyType(node.type)) return;
+      if (ts.isConstTypeReference(node.type)) return;
 
       const targetType = ctx.checker.getTypeFromTypeNode(node.type);
       if (targetType.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) return;

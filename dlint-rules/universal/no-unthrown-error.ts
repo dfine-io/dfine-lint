@@ -2,21 +2,7 @@
 // almost always a forgotten `throw`. The value is provably unused: its parent is an
 // ExpressionStatement, so it is not thrown, returned, assigned, or passed anywhere.
 import ts from "typescript";
-import { defineRule } from "@dfine-io-gmbh/dlint";
-
-function derivesFromError(type: ts.Type, checker: ts.TypeChecker): boolean {
-  const seen = new Set<ts.Type>();
-  function walk(t: ts.Type): boolean {
-    if (seen.has(t)) return false;
-    seen.add(t);
-    if (t.symbol?.name === "Error") return true;
-    if (t.isClassOrInterface()) {
-      for (const base of checker.getBaseTypes(t)) if (walk(base)) return true;
-    }
-    return false;
-  }
-  return walk(type);
-}
+import { defineRule, extendsLibType } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -28,7 +14,8 @@ export default defineRule({
       if (!ts.isExpressionStatement(node)) return;
       if (!ts.isNewExpression(node.expression)) return;
       const type = ctx.checker.getTypeAtLocation(node.expression);
-      if (!derivesFromError(type, ctx.checker)) return;
+      // The lib's Error or a subclass of it; a local `class Error` with side effects is not one
+      if (!extendsLibType(type, ctx.checker, ["Error"])) return;
       ctx.reportAt(node.expression, "Error constructed but never thrown -- did you forget `throw`?", {
         action: "throw-error",
         pattern: "Throw the error - prefix with throw, or remove the dead new Error(...)",

@@ -1,7 +1,7 @@
-// Enforces 8 sub-checks for type safety and semantic identity principles.
+// Enforces 9 sub-checks for type safety and semantic identity principles.
 // Checks: Partial to Pick, Record to named keys, index signatures,
 // redundant typeof, const to satisfies, in to discriminant, mutable to readonly,
-// inline union to named type alias. Precision at the source eliminates downstream guards.
+// inline union to named type alias, redundant null check. Precision at the source eliminates downstream guards.
 import ts from "typescript";
 import { defineRule, isLibDeclaration, isWriteTarget } from "@dfine-io-gmbh/dlint";
 
@@ -26,20 +26,10 @@ function getLiteralKeys(obj: ts.ObjectLiteralExpression): string[] {
   return keys;
 }
 
-function isTypeRefNamed(
-  typeNode: ts.TypeNode,
-  name: string
-): typeNode is ts.TypeReferenceNode {
-  return (
-    ts.isTypeReferenceNode(typeNode) &&
-    ts.isIdentifier(typeNode.typeName) &&
-    typeNode.typeName.text === name
-  );
-}
-
-/** Boolean form of isTypeRefNamed for negated checks — a type predicate would narrow the operand to never. */
-function isTypeRefNamedBool(typeNode: ts.TypeNode, name: string): boolean {
-  return isTypeRefNamed(typeNode, name);
+// The TS lib's own Partial / Record, never a project type that shares the name
+function isTypeRefNamed(typeNode: ts.TypeReferenceNode, name: string, checker: ts.TypeChecker): boolean {
+  const sym = checker.getSymbolAtLocation(typeNode.typeName);
+  return sym !== undefined && sym.name === name && isLibDeclaration(sym);
 }
 
 /** Find a property that is literal-typed on ALL union members (discriminant) */
@@ -71,7 +61,7 @@ export default defineRule({
   check(ctx) {
     const mutatingArrayMethods = ctx.options.mutatingArrayMethods ? new Set(ctx.options.mutatingArrayMethods as string[]) : MUTATING_ARRAY_METHODS;
 
-    if (ctx.sourceFile.fileName.endsWith(".d.ts")) return;
+    if (ctx.sourceFile.isDeclarationFile) return;
     // Exempt: re-export-only files (UI component wrappers that re-export third-party primitives)
     const sf = ctx.sourceFile;
     if (sf.statements.every(s => ts.isImportDeclaration(s) || ts.isExportDeclaration(s) || ts.isExportAssignment(s))) return;
@@ -81,7 +71,8 @@ export default defineRule({
       if (
         ts.isVariableDeclaration(node) &&
         node.type &&
-        isTypeRefNamed(node.type, "Partial") &&
+        ts.isTypeReferenceNode(node.type) &&
+        isTypeRefNamed(node.type, "Partial", ctx.checker) &&
         node.type.typeArguments?.length === 1 &&
         node.initializer &&
         ts.isObjectLiteralExpression(node.initializer)
@@ -107,13 +98,12 @@ export default defineRule({
         }
       }
 
-      // Sub-check 2 (unbranded-type-consistency) moved to specific/unbranded-type-consistency.ts
-
       // Sub-check 3: record-known-keys — Record<string, V> with literal-key object literal
       if (
         ts.isVariableDeclaration(node) &&
         node.type &&
-        isTypeRefNamed(node.type, "Record") &&
+        ts.isTypeReferenceNode(node.type) &&
+        isTypeRefNamed(node.type, "Record", ctx.checker) &&
         node.type.typeArguments?.length === 2 &&
         node.initializer &&
         ts.isObjectLiteralExpression(node.initializer)
@@ -219,6 +209,7 @@ export default defineRule({
                 action: "remove-nullcheck",
                 pattern: "Type is already non-nullable - remove the guard",
               },
+              "redundant-nullcheck",
             );
           }
         }
@@ -232,8 +223,8 @@ export default defineRule({
         node.initializer &&
         ts.isObjectLiteralExpression(node.initializer) &&
         node.initializer.properties.length >= 2 &&
-        !isTypeRefNamedBool(node.type, "Partial") &&
-        !isTypeRefNamedBool(node.type, "Record")
+        !isTypeRefNamed(node.type, "Partial", ctx.checker) &&
+        !isTypeRefNamed(node.type, "Record", ctx.checker)
       ) {
         const parent = node.parent;
         const typeNode = node.type;

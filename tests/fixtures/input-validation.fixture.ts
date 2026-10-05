@@ -29,3 +29,21 @@ async function listed(input: Nested) { // EXPECT: input-validation
   return input.meta.tag;
 }
 export { listed as listedAction };
+
+// NEGATIVE: safeParseAsync validates as well
+export async function createAsync(input: Nested) {
+  const result = await Schema.safeParseAsync(input);
+  return result.success ? result.data.meta.tag : null;
+}
+
+// NEGATIVE: zod's validate() checks the params without throwing, like safeParse
+export async function createChecked(input: Nested) {
+  if (!Schema.validate(input)) return null;
+  return input.meta.tag;
+}
+
+// POSITIVE: a lookalike safeParse is no zod validation
+declare const lookalike: { parse(x: unknown): Nested; safeParse(x: unknown): { success: boolean } };
+export async function createLookalike(input: Nested) { // EXPECT: input-validation
+  return lookalike.safeParse(input).success;
+}

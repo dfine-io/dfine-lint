@@ -106,16 +106,17 @@ function scanBranchFiles(
 }
 
 function collectFilesFromDir(
-  dir: string, extensions: readonly string[], projectPath: string, ig: ReturnType<typeof ignore>
+  dir: string, extensions: readonly string[], projectPath: string, isExcluded: (path: string) => boolean
 ): string[] {
   const result: string[] = [];
   function walk(d: string): void {
     for (const entry of readdirSync(d)) {
       const full = join(d, entry);
+      const rel = relative(projectPath, full);
       if (statSync(full).isDirectory()) {
-        if (!ig.ignores(relative(projectPath, full) + "/")) walk(full);
-      } else {
-        result.push(relative(projectPath, full));
+        if (!isExcluded(rel + "/")) walk(full);
+      } else if (!isExcluded(rel)) {
+        result.push(rel);
       }
     }
   }
@@ -123,23 +124,38 @@ function collectFilesFromDir(
   return filterByExtension(result, extensions);
 }
 
-function loadIgnorePatterns(projectPath: string): ReturnType<typeof ignore> {
+function readOptional(file: string): string {
+  try { return readFileSync(file, "utf-8"); } catch { return ""; }
+}
+
+// Every pattern carries its source as mark, so a skipped file can name the rule that excluded it
+function loadIgnorePatterns(projectPath: string, exclude: readonly string[]): ReturnType<typeof ignore> {
   const ig = ignore();
-  try { ig.add(readFileSync(join(projectPath, ".gitignore"), "utf-8")); } catch { /* no .gitignore */ }
-  try { ig.add(readFileSync(join(projectPath, DLINT_IGNORE_FILE), "utf-8")); } catch { /* no .dlintignore */ }
+  for (const source of [".gitignore", DLINT_IGNORE_FILE]) {
+    for (const pattern of readOptional(join(projectPath, source)).split(/\r?\n/)) ig.add({ pattern, mark: source });
+  }
+  for (const pattern of exclude) ig.add({ pattern, mark: "the config's exclude list" });
   return ig;
+}
+
+// A file named on the command line and still excluded says why, as git check-ignore -v does
+function noteExcluded(file: string, ig: ReturnType<typeof ignore>): void {
+  const rule = ig.checkIgnore(file).rule;
+  process.stderr.write(`dlint: skipped ${file}${rule ? `, it matches "${rule.pattern}" in ${rule.mark}` : ""}\n`);
 }
 
 // Files a run covers: explicit --files (directories expanded), a git selection, or the full scan
 export function collectFiles(opts: CliOptions, config: DlintConfig): string[] {
   if (config.maxFileSize) setMaxFileSize(config.maxFileSize);
-  const extensions = (config.include ?? ["**/*.ts", "**/*.tsx"])
-    .map((p) => extname(p))
-    .filter((e) => e.length > 1);
+  const include = config.include ?? ["**/*.ts", "**/*.tsx"];
+  const extensions = include.map((p) => extname(p)).filter((e) => e.length > 1);
   if (extensions.length === 0) throw new Error(`include has no file pattern with an extension (e.g. "**/*.ts"): ${JSON.stringify(config.include)}`);
-  const ig = loadIgnorePatterns(opts.path);
-  if (config.exclude) for (const d of config.exclude) ig.add(d);
-  const isExcluded = (f: string): boolean => ig.ignores(f);
+  const ig = loadIgnorePatterns(opts.path, config.exclude ?? []);
+  // include takes exclude's pattern syntax; a file is scanned when an include pattern matches it
+  const included = ignore().add(include);
+  // The patterns describe paths inside the project; a path outside it (../shared) matches none of them
+  const isExcluded = (f: string): boolean => ignore.isPathValid(f) && ig.ignores(f);
+  const isIncluded = (f: string): boolean => !ignore.isPathValid(f) || included.ignores(f);
   // A --files path, file or directory, is never size-filtered
   if (opts.files.length > 0) {
     const expanded: string[] = [];
@@ -148,15 +164,23 @@ export function collectFiles(opts: CliOptions, config: DlintConfig): string[] {
       if (!existsSync(absPath)) {
         throw new Error(`--files: "${f}" not found (a file or directory relative to ${opts.path})`);
       }
-      if (statSync(absPath).isDirectory()) expanded.push(...collectFilesFromDir(absPath, extensions, opts.path, ig));
-      else expanded.push(f);
+      // ./src/a.ts and src/a.ts name one file
+      const rel = relative(opts.path, absPath);
+      if (statSync(absPath).isDirectory()) expanded.push(...collectFilesFromDir(absPath, extensions, opts.path, isExcluded).filter(isIncluded));
+      else if (isExcluded(rel)) noteExcluded(rel, ig);
+      else expanded.push(rel);
     }
-    return expanded.filter((f) => !isExcluded(f));
+    return expanded;
   }
   // Every git listing drops excluded, deleted and oversized files
-  const keep = (f: string): boolean => !isExcluded(f) && withinSizeLimit(opts.path, f);
+  const keep = (f: string): boolean => isIncluded(f) && !isExcluded(f) && withinSizeLimit(opts.path, f);
   if (opts.commit) return scanCommitFiles(opts.path, extensions).filter(keep);
   if (opts.branch) return scanBranchFiles(opts.path, extensions, config.baseBranch).filter(keep);
   if (opts.changed) return scanChangedFiles(opts.path, extensions).filter(keep);
-  return scanFiles(opts.path, extensions).filter(keep);
+  // A full scan whose include matches none of the project's files is a broken pattern (say "./src/**"), not a clean run
+  const all = scanFiles(opts.path, extensions);
+  if (!all.some(isIncluded)) {
+    throw new Error(`include matches no file: ${JSON.stringify(include)} (patterns are relative to ${opts.path}, without "./")`);
+  }
+  return all.filter(keep);
 }

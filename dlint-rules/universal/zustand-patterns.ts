@@ -3,7 +3,7 @@
 // 2. Store read inside useEffect with empty deps — stale value risk, use props instead.
 // 3. Multi-field store selector without useShallow — per-field subscription churn.
 import ts from "typescript";
-import { defineRule, isFromPackage } from "@dfine-io-gmbh/dlint";
+import { defineRule, isTypeFromPackage, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -11,7 +11,7 @@ import { defineRule, isFromPackage } from "@dfine-io-gmbh/dlint";
 const MULTI_FIELD_MIN = 2;
 // ===========================================================================
 
-/** TypeChecker: verify type has getState() call signature (Zustand StoreApi) */
+// A store zustand declares with a callable getState; a Redux store has getState too, so the package decides
 function isZustandStoreType(
   identifier: ts.Identifier,
   checker: ts.TypeChecker
@@ -20,7 +20,7 @@ function isZustandStoreType(
   const getStateProp = type.getProperty("getState");
   if (!getStateProp) return false;
   const gsType = checker.getTypeOfSymbol(getStateProp);
-  return gsType.getCallSignatures().length > 0;
+  return gsType.getCallSignatures().length > 0 && isTypeFromPackage(type, checker, "zustand");
 }
 
 export default defineRule({
@@ -33,14 +33,12 @@ export default defineRule({
     const multiFieldMin = (ctx.options.multiFieldMin as number) ?? MULTI_FIELD_MIN;
 
     ctx.walk((node) => {
+      // All three sub-checks judge a call
+      if (!ts.isCallExpression(node)) return;
+      const callee = resolveCallee(node, ctx.checker);
+
       // Sub-check 1: useShallow with single-field selector
-      if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "useShallow" &&
-        isFromPackage(node.expression, ctx.checker, "zustand") &&
-        node.arguments.length > 0
-      ) {
+      if (callee?.packageName === "zustand" && callee.name === "useShallow" && node.arguments.length > 0) {
         const [arg] = node.arguments;
         if (!arg) return;
         if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
@@ -71,13 +69,7 @@ export default defineRule({
       }
 
       // Sub-check 2: Store selector inside useEffect with empty/stable deps
-      if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "useEffect" &&
-        isFromPackage(node.expression, ctx.checker, "react") &&
-        node.arguments.length >= 2
-      ) {
+      if (callee?.packageName === "react" && callee.name === "useEffect" && node.arguments.length >= 2) {
         const [effectBody, depsArg] = node.arguments;
         if (
           depsArg &&
@@ -142,7 +134,6 @@ export default defineRule({
 
       // Sub-check 3: Multi-field store selector without useShallow
       if (
-        ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
         isZustandStoreType(node.expression, ctx.checker) &&
         node.arguments.length >= 1 &&
@@ -167,7 +158,8 @@ export default defineRule({
                 action: "wrap-with-useshallow",
                 pattern:
                   "Wrap the selector with useShallow to prevent per-field re-renders - useStore(useShallow((s) => ({ a: s.a, b: s.b })))",
-              }
+              },
+              "multi-field-selector-without-shallow",
             );
           }
         }

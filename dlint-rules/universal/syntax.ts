@@ -2,7 +2,7 @@
 // excessive chaining, and overly long expressions.
 // Complex syntax makes code harder to read, debug, and maintain.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isStringType, isWriteTarget, valueSymbolOf } from "@dfine-io-gmbh/dlint";
+import { defineRule, extendsLibType, isLibDeclaration, isStringType, isWriteTarget, resolveCallee, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 export default defineRule({
   meta: {
@@ -73,7 +73,8 @@ export default defineRule({
 
       // 4. prefer-spread — .apply(null/undefined, args) → ...args
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === "apply" && node.arguments.length === 2) {
+          node.expression.name.text === "apply" && node.arguments.length === 2 &&
+          resolveCallee(node, ctx.checker)?.lib) {
         const firstArg = node.arguments[0];
         if (!firstArg) return;
         if (firstArg.kind === ts.SyntaxKind.NullKeyword || firstArg.kind === ts.SyntaxKind.UndefinedKeyword ||
@@ -88,7 +89,8 @@ export default defineRule({
       // 5. prefer-rest-params — arguments object usage
       if (ts.isIdentifier(node) && node.text === "arguments") {
         const sym = ctx.checker.getSymbolAtLocation(node);
-        if (sym && sym.flags & ts.SymbolFlags.FunctionScopedVariable) {
+        // The function's own arguments object, not a property or binding name that only reads "arguments"
+        if (sym && sym === ctx.checker.resolveName("arguments", node, ts.SymbolFlags.Value, false) && !sym.declarations?.length) {
           ctx.reportAt(node, "Use rest parameters instead of arguments", {
             action: "use-rest", pattern: "Use rest parameters (...args) instead of the arguments object",
             reference: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/rest_parameters",
@@ -109,10 +111,10 @@ export default defineRule({
       }
 
       // 7. prefer-numeric-literals — parseInt with base 2/8/16
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.arguments.length === 2) {
-        const sym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!sym || !isLibDeclaration(sym)) return;
-        if (node.expression.text !== "parseInt") return;
+      if (ts.isCallExpression(node) && node.arguments.length === 2) {
+        // parseInt or Number.parseInt from the lib
+        const callee = resolveCallee(node, ctx.checker);
+        if (!callee?.lib || callee.name !== "parseInt") return;
         const radix = node.arguments[1];
         if (!radix) return;
         if (!ts.isNumericLiteral(radix)) return;
@@ -134,10 +136,8 @@ export default defineRule({
       }
 
       // 8. prefer-regex-literals — new RegExp with string literal
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
-        const sym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!sym || !isLibDeclaration(sym)) return;
-        if (node.expression.text !== "RegExp") return;
+      if (ts.isNewExpression(node)) {
+        if (!extendsLibType(ctx.checker.getTypeAtLocation(node.expression), ctx.checker, ["RegExpConstructor"])) return;
         const reArg = node.arguments?.[0];
         if (!reArg || !ts.isStringLiteral(reArg)) return;
         ctx.reportAt(node, "Use regex literal instead of new RegExp()", {

@@ -1,17 +1,7 @@
 // Ensures every Promise is consumed: awaited, void-wrapped, assigned, or .catch()-guarded.
 // Unhandled Promises silently swallow errors and cause unpredictable execution order.
-// Exempts logger calls which use fire-and-forget by convention.
 import ts from "typescript";
-import { defineRule, isLibDeclaration, isThenable } from "@dfine-io-gmbh/dlint";
-
-function isLoggerCall(expr: ts.CallExpression, checker: ts.TypeChecker): boolean {
-  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
-  const obj = expr.expression.expression;
-  const type = checker.getTypeAtLocation(obj);
-  if (!type.getProperty("info") || !type.getProperty("warn") || !type.getProperty("error")) return false;
-  const sym = checker.getSymbolAtLocation(obj);
-  return !!sym?.declarations?.length && !isLibDeclaration(sym);
-}
+import { defineRule, isThenable } from "@dfine-io-gmbh/dlint";
 
 function hasCatchInChain(
   expr: ts.CallExpression,
@@ -52,11 +42,8 @@ export default defineRule({
         }
         const type = ctx.checker.getTypeAtLocation(expr);
         if (!isThenable(type, ctx.checker)) return;
-        // Call-specific handling: .catch() chain, logger exemption
-        if (ts.isCallExpression(expr)) {
-          if (hasCatchInChain(expr, ctx.checker)) return;
-          if (isLoggerCall(expr, ctx.checker)) return;
-        }
+        // A .catch() in the chain handles the rejection
+        if (ts.isCallExpression(expr) && hasCatchInChain(expr, ctx.checker)) return;
         ctx.reportAt(
           expr,
           `Await or catch floating Promise: ${ctx.checker.typeToString(type)}`,

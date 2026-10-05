@@ -74,9 +74,11 @@ export default defineRule({
         const cond =
           ts.isIfStatement(node) || ts.isWhileStatement(node) ? node.expression : node.condition;
         const condType = checker.getTypeAtLocation(cond);
-        const intrinsic = (condType as { intrinsicName?: string }).intrinsicName;
-        if (intrinsic === "true" || intrinsic === "false") {
-          ctx.reportAt(cond, `Remove dead branch -- condition is always ${intrinsic}`, {
+        const literal = condType.flags & ts.TypeFlags.BooleanLiteral
+          ? (checker.isTypeAssignableTo(condType, checker.getTrueType()) ? "true" : "false")
+          : undefined;
+        if (literal) {
+          ctx.reportAt(cond, `Remove dead branch -- condition is always ${literal}`, {
             action: "simplify-branch",
             pattern: "Remove dead branch or unnecessary condition",
           });

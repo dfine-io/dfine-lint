@@ -7,8 +7,8 @@ description: >-
   dlint-rules/ or a project rulesDir, building a rule via defineRule, writing rule fixtures
   or running tests/run.sh, configuring dlint.config.ts (severity, groups, ruleOptions,
   overrides), building a project rule pack / plugin, or reasoning about the dlint SDK
-  helpers (ctx.checker, ctx.walk, resolveSymbol, isFromPackage, etc.). Trigger it even when
-  the user just says "add a lint rule", "catch X with the type checker", "make a dlint
+  helpers (ctx.checker, ctx.walk, resolveSymbol, resolveCallee, isFromPackage, etc.). Trigger
+  it even when the user just says "add a lint rule", "catch X with the type checker", "make a dlint
   rule", "tune a rule for our repo", or "why is this rule firing" - dlint has hard
   principles and a no-duplication gate that are easy to violate without this skill.
 ---
@@ -40,13 +40,16 @@ why results are reproducible.
 
 **2. No string heuristics: deterministic, dynamic, scalable.**
 A rule must not key off identifier spellings, path substrings, or "this looks like X" name
-matching to decide whether code is a bug. Use symbol resolution (`resolveSymbol`,
-`isFromPackage`, `isLibDeclaration`, `isNodeModulesDeclaration`), type flags, and structural
-AST checks. A correct rule needs **no per-case `if`-patches** - if you find yourself
-special-casing a specific file, name, or example to make a finding go away, the rule is
-wrong (or the finding is a real codebase bug - see G1.1 below). Determinism means: same
-code + same types -> same findings, every run. This also makes a rule scale to any codebase,
-not just the one in front of you.
+matching to decide whether code is a bug. Use symbol resolution (`resolveCallee`,
+`resolveSymbol`, `isTypeFromPackage`, `isLibDeclaration`, `isProjectSourceFile`), type flags,
+and structural AST checks. A correct rule needs **no per-case `if`-patches** - if you find
+yourself special-casing a specific file, name, or example to make a finding go away, the rule
+is wrong (or the finding is a real codebase bug - see "Rule philosophy" below). Determinism
+means: same code + same types -> same findings, every run. This also makes a rule scale to any
+codebase, not just the one in front of you.
+
+- Replace each string check with the compiler fact it guesses at - see `references/sdk-api.md`.
+- Keep a name check only as a cheap prefilter - the resolved symbol or type decides.
 
 **3. No duplication: before authoring a new rule, prove no existing rule covers it.**
 dlint ships ~86 universal rules, and most tunable values are exposed via `ruleOptions` - a
@@ -55,19 +58,18 @@ new rule, check:
 
 - **Already detected?** Run `dlint --list-rules` (JSON: id + one-line description of every loaded
   rule, project rules included), grep `dlint-rules/universal/`, and read the README rule table.
-- **Coverable by `ruleOptions`?** A threshold, allow/deny list, method set, route pairs, or
-  id allow-list - if yes, configure it; do not create a near-duplicate and do not copy a
+- **Coverable by `ruleOptions`?** A threshold, allow/deny list, method set, or route pairs:
+  if yes, configure it; do not create a near-duplicate and do not copy a
   universal rule into a `rulesDir` just to change a value.
-- **Genuinely new concern?** Only then author a rule, with a descriptive id naming the bug (G1.4).
+- **Genuinely new concern?** Only then author a rule, with a descriptive id naming the bug it finds.
 
 State which existing rules you checked and why they do not fit before creating anything new.
 
 ### Rule philosophy (carry these too)
 
-- **G1.1** A finding is a codebase bug, not a rule bug - fix the code, not the rule. Only
-  loosen a rule when it is a true false positive, and fix it generically, never per-case.
-- **G1.3** Avoid unreliable edge-case compiler APIs; don't build a rule on something that
-  only works in narrow cases.
+- **Codebase first**: Treat a finding as a codebase bug - fix the code, not the rule.
+- **Generic fixes**: Loosen a rule only for a true false positive, with a type or symbol condition.
+- **Stable APIs**: Build only on public compiler APIs that hold in every case - never on internals.
 
 ## Before you start: is this a new rule, or config?
 
@@ -86,7 +88,7 @@ A rule is one file: `dlint-rules/universal/<id>.ts` (bundled) or `<rulesDir>/<id
 
 ```typescript
 import ts from "typescript";
-import { defineRule, resolveSymbol, isFromPackage } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - defaults; a project overrides these via ruleOptions["<id>"]
@@ -106,10 +108,10 @@ export default defineRule({
     const minCallers = (ctx.options.minCallers as number) ?? MIN_CALLERS;
 
     ctx.walk((node) => {
-      if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression))
-        return;
-      // Verify origin via symbol/type resolution, NOT by name string (principle 2).
-      if (!isFromPackage(node.expression, ctx.checker, "react")) return;
+      if (!ts.isCallExpression(node)) return;
+      // Origin via symbol resolution, NOT a name string (principle 2): aliases and React.x count.
+      const callee = resolveCallee(node, ctx.checker);
+      if (callee?.packageName !== "react" || callee.name !== "cache") return;
       // ... structural + type checks ...
       ctx.reportAt(node, `Human-readable problem and fix`, {
         action: "short-action-id",
@@ -130,6 +132,7 @@ Key context (full catalogue in `references/sdk-api.md`):
 - `ctx.createFix / insertBefore / insertAfter / deleteNode` - build `fix` TextChanges (autofix).
 - `ctx.isSubCheckDisabled(subCheckId)` - gate a sub-check inside a multi-check rule.
 - `ctx.options` - per-rule project overrides; read as `ctx.options.x ?? DEFAULT`.
+- `ctx.projectRoot` - absolute project root (`--path`, else the config dir, else the cwd).
 
 Authoring rules:
 
@@ -144,7 +147,8 @@ Authoring rules:
 Every added or changed rule needs a fixture. Convention:
 
 - `tests/fixtures/<id>.fixture.ts` (or `.tsx`) - self-contained code.
-- Mark each line that must be flagged with `// EXPECT: <id>` (optionally `// EXPECT: <id>@<line>`).
+- Put an other-extension twin fixture into `tests/fixtures/variants/` - same-folder twins collide.
+- Write one `// EXPECT: <id>` per expected finding on its line (or `// EXPECT: <id>@<line>`).
 - Every other line must not be flagged - this is the false-positive guard.
 - Run one rule: `bash tests/run.sh <id>` - or the whole suite: `bash tests/run.sh`.
 

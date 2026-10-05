@@ -1,8 +1,18 @@
 // Prevents axios/fetch in Client Components — use Server Actions instead.
-// Flags axios calls and fetch('/api/...') in non-server files.
-// Ensures data flows through the Server Action boundary for type safety.
+// Flags axios calls and fetch('/api/...') in JSX files that are not "use server".
 import ts from "typescript";
-import { defineRule, hasDirective, isLibDeclaration, isNodeModulesDeclaration } from "@dfine-io-gmbh/dlint";
+import { defineRule, hasDirective, isThenable, resolveCallee } from "@dfine-io-gmbh/dlint";
+
+// The /api route segment itself, not a path that merely starts with the letters (/apidocs.json)
+function isApiRoute(path: string): boolean {
+  return path === "/api" || path.startsWith("/api/") || path.startsWith("/api?");
+}
+
+// The leading text of a fetch URL: a string, a backtick string, or a template's head
+function urlPrefix(arg: ts.Expression | undefined): string | undefined {
+  if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) return arg.text;
+  return arg && ts.isTemplateExpression(arg) ? arg.head.text : undefined;
+}
 
 export default defineRule({
   meta: {
@@ -10,62 +20,31 @@ export default defineRule({
     description: "No axios/fetch in Client Components — use Server Action",
   },
   check(ctx) {
-    if (!ctx.sourceFile.fileName.endsWith(".tsx")) return;
+    // Components live in JSX files: a module without a directive is still client code when a client file imports it
+    if (ctx.sourceFile.languageVariant !== ts.LanguageVariant.JSX) return;
     if (hasDirective(ctx.sourceFile, "use server")) return;
 
     ctx.walk((node) => {
       if (!ts.isCallExpression(node)) return;
+      const callee = resolveCallee(node, ctx.checker);
+      if (!callee) return;
 
-      // axios(...) or axios.get/post/...
-      if (ts.isIdentifier(node.expression) && node.expression.text === "axios") {
-        const axiosSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (axiosSym && isNodeModulesDeclaration(axiosSym)) {
-          ctx.reportAt(node, "Replace axios with Server Action + startTransition in Client Component", {
-            action: "use-server-action",
-            pattern: "startTransition(async () => { const result = await serverAction(); })",
-          });
-        }
-      }
-      if (
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "axios"
-      ) {
-        const axiosSym = ctx.checker.getSymbolAtLocation(node.expression.expression);
-        if (axiosSym && isNodeModulesDeclaration(axiosSym)) {
-          ctx.reportAt(node, "Replace axios with Server Action + startTransition in Client Component", {
-            action: "use-server-action",
-            pattern: "startTransition(async () => { const result = await serverAction(); })",
-          });
-        }
+      // axios(...), axios.get(...) or an aliased import: an axios call that returns a promise sends a request
+      if (callee.packageName === "axios" && isThenable(ctx.checker.getTypeAtLocation(node), ctx.checker)) {
+        ctx.reportAt(node, "Replace axios with Server Action + startTransition in Client Component", {
+          action: "use-server-action",
+          pattern: "startTransition(async () => { const result = await serverAction(); })",
+        });
+        return;
       }
 
-      // fetch('/api/...') — string literal starting with /api
-      if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
-        const fetchSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (!fetchSym || !isLibDeclaration(fetchSym)) return;
-        const firstArg = node.arguments[0];
-        if (
-          firstArg &&
-          ts.isStringLiteral(firstArg) &&
-          firstArg.text.startsWith("/api")
-        ) {
-          ctx.reportAt(node, "Replace fetch('/api/...') with Server Action in Client Component", {
-            action: "use-server-action",
-            pattern: "startTransition(async () => { const result = await serverAction(); })",
-          });
-        }
-        // Template literal: fetch(`/api/${id}`)
-        if (
-          firstArg &&
-          ts.isTemplateExpression(firstArg) &&
-          firstArg.head.text.startsWith("/api")
-        ) {
-          ctx.reportAt(node, "Replace fetch(`/api/...`) with Server Action in Client Component", {
-            action: "use-server-action",
-            pattern: "startTransition(async () => { const result = await serverAction(); })",
-          });
-        }
+      // The global fetch (TS lib or @types/node), globalThis.fetch included, on the project's own /api route
+      const prefix = urlPrefix(node.arguments[0]);
+      if (callee.global && callee.name === "fetch" && prefix !== undefined && isApiRoute(prefix)) {
+        ctx.reportAt(node, "Replace fetch('/api/...') with Server Action in Client Component", {
+          action: "use-server-action",
+          pattern: "startTransition(async () => { const result = await serverAction(); })",
+        });
       }
     });
   },

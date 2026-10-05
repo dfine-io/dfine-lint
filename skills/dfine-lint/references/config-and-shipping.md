@@ -13,8 +13,8 @@ export default {
   bundledRules: true, // load the package's universal rules (default; false to opt out)
   rulesDir: ".dlint/rules", // project rules (a rule pack); same id overrides a bundled rule
   severity: "error", // global default severity
-  include: ["**/*.ts", "**/*.tsx"],
-  exclude: ["node_modules", ".next", "build"],
+  include: ["**/*.ts", "**/*.tsx"], // files to scan, exclude's syntax, each pattern with an extension
+  exclude: ["node_modules", ".next", "build"], // also skipped: the root .gitignore and .dlintignore
   tsconfig: "./tsconfig.json",
   maxFileSize: 500_000,
   referencesDir: ".dlint/references",
@@ -31,8 +31,9 @@ export default {
     },
   },
   overrides: [
-    // per-rule severity, optionally file-scoped
+    // per-rule severity, optionally file-scoped (files are path substrings, any severity)
     { ruleId: "no-magic-numbers", severity: "warning" },
+    { ruleId: "complexity", severity: "warning", files: ["tests/"] },
     { ruleId: "unused-export", severity: "off", files: ["db/", "/route.ts"] },
     {
       ruleId: "react:nested-component",
@@ -45,9 +46,15 @@ export default {
 
 ## Severity precedence (most specific wins)
 
-`per-rule override` -> `in-rule meta.severity` -> `group` -> `global default`.
+`override` -> `in-rule meta.severity` -> `group` -> `global default`, the first that applies wins.
 
-- A rule resolved to `off` (by any layer) is not run.
+- An override whose `files` match the path beats a global one; the last matching entry wins.
+- A sub-check takes its own `ruleId:subCheckId` override, else `off` when its rule's override is
+  `off`, else its group, else its rule's severity: `opinionated` at `warning` makes its sub-checks
+  warnings, and a rule override of another severity leaves them to their group.
+- `include` does not narrow a file named with `--files`; when it matches no file of a full scan, the run exits 2.
+- A finding whose severity resolves to `off` is dropped; a rule is not run in a file where it and
+  every sub-check the config names are off.
 - The engine exits non-zero when `errorCount > 0` (so dlint is a CI gate out of the box);
   `--no-error` reports without failing.
 
@@ -57,8 +64,9 @@ A group bundles rule ids (and `ruleId:subCheckId` members) under one severity.
 
 - The package ships one built-in group, **`opinionated`**, with `severity: "off"`. It holds
   the ~25 style/architecture rules (and a few opinionated sub-checks of `performance`,
-  `typescript`, `no-implicit-coercion`) that a generic project may not share. So a zero-config
-  run is a clean gate of universal bugs + framework-guarded checks; the opinionated set is opt-in:
+  `typescript`, `no-implicit-coercion`, `prefer-modern-api`) that a generic project may not
+  share. So a zero-config run is a clean gate of universal bugs + framework-guarded checks; the
+  opinionated set is opt-in:
   ```typescript
   groups: [{ id: "opinionated", severity: "error" }]; // one line turns the whole set on
   ```
@@ -79,7 +87,7 @@ A group bundles rule ids (and `ruleId:subCheckId` members) under one severity.
 
 Each tunable rule has a `CONFIG` block of defaults; a project overrides them by rule id.
 The option key is the camelCase of the rule's CONFIG const (`MAX_LINES` -> `maxLines`,
-`EXTERNAL_ID_NAMES` -> `externalIdNames`, `ALLOWED_PAIRS` -> `allowedPairs`). This is the
+`CONSTANTS_DIR` -> `constantsDir`, `ALLOWED_PAIRS` -> `allowedPairs`). This is the
 single-source override path - the rule's logic stays in the package and improves with
 `pnpm update`. **Never copy a universal rule into `rulesDir` just to change a value** - that
 creates an overlap that silently freezes stale logic. Copy/author a project rule only when
@@ -87,7 +95,7 @@ the concern is genuinely new.
 
 To make a NEW rule's value tunable, read it as `ctx.options.x ?? DEFAULT` (see SKILL.md
 authoring + sdk-api.md). To target a single sub-check, use a `ruleId:subCheckId` member in a
-group or an override.
+group or an override; a rule passes that id to `reportAt` so the setting reaches its findings.
 
 ## Shipping a rule pack / plugin
 

@@ -2,17 +2,18 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { createJiti } from "jiti";
-import { BUNDLED_RULES_DIR } from "../core/constants.js";
+import { BUNDLED_RULES_DIR, PACKAGE_ROOT } from "../core/constants.js";
 import type { DlintConfig, RuleDefinition, ExtractorDefinition, SkippedRule } from "../types.js";
-import { resolveGroups } from "./groups.js";
+import { severityPolicy, type SeverityPolicy } from "./severity.js";
 
 // Consumer project rules (.dlint/rules/*.ts) are jiti-loaded from the CONSUMER's directory, so their bare
 // `import ts from "typescript"` would resolve the consumer's typescript — on a TS7-native project that package
 // has no in-process JS-API (SyntaxKind/isX/createSourceFile are undefined) → the rule crashes on load and takes
 // the whole run with it. Alias `typescript` to dlint's own bundled 6.x engine so EVERY jiti-loaded rule (bundled
 // AND consumer) resolves the JS-API compiler deterministically — this is the isolation the TS7 interim promises.
+// The SDK import is pinned the same way: another install would judge lib files by its own TypeScript's directory.
 const require = createRequire(import.meta.url);
-const alias = { typescript: require.resolve("typescript") };
+const alias = { typescript: require.resolve("typescript"), "@dfine-io-gmbh/dlint": PACKAGE_ROOT };
 const jiti = createJiti(import.meta.url, { interopDefault: true, alias });
 // Bundled rules default-import only typescript, so they skip the interop proxy and its getter on every ts.* access
 const bundledJiti = createJiti(import.meta.url, { interopDefault: false, alias });
@@ -46,17 +47,7 @@ function collectRuleFiles(dir: string): string[] {
 export async function loadRules(
   projectPath: string,
   config: DlintConfig
-): Promise<{ rules: RuleDefinition[]; skipped: SkippedRule[]; disabled: string[] }> {
-  const overrideMap = new Map<string, "error" | "warning" | "off">();
-  for (const o of config.overrides ?? []) {
-    if (o.files) continue; // File-scoped overrides handled in engine.ts
-    overrideMap.set(o.ruleId, o.severity);
-  }
-  const defaultSeverity = config.severity ?? "error";
-  // Group severities resolve below per-rule overrides and the rule's own meta.severity,
-  // above the global default. The built-in "opinionated" group ships off (see groups.ts).
-  const { ruleSeverity: groupRuleSeverity } = resolveGroups(config.groups);
-
+): Promise<{ rules: RuleDefinition[]; skipped: SkippedRule[]; disabled: string[]; severity: SeverityPolicy }> {
   // Bundled universal rules ship with the package and load by default; project rules
   // (rulesDir) are additive and override a bundled rule with the same id.
   const dirs: string[] = [];
@@ -73,7 +64,7 @@ export async function loadRules(
   // take down a whole run. Bundled rules ship validated, so in practice this only hits rulesDir.
   const byId = new Map<string, RuleDefinition>();
   const skipped: SkippedRule[] = [];
-  const loaded = new Set<string>();
+  const aliases = new Map<string, string>();
   for (const dir of dirs) {
     for (const filePath of collectRuleFiles(dir)) {
       let rule: RuleDefinition | undefined;
@@ -95,17 +86,15 @@ export async function loadRules(
         continue;
       }
       rule.id = basename(filePath, ".ts");
-      loaded.add(rule.id);
-      const baseName = filePath.replace(dir + "/", "").replace(/\.ts$/, "");
-      const override = overrideMap.get(rule.id) ?? overrideMap.get(baseName);
-      const resolved =
-        override ?? rule.meta.severity ?? groupRuleSeverity.get(rule.id) ?? defaultSeverity;
-      if (resolved === "off") { byId.delete(rule.id); continue; }
-      rule.severity = resolved;
+      aliases.set(filePath.replace(dir + "/", "").replace(/\.ts$/, ""), rule.id);
       byId.set(rule.id, rule);
     }
   }
-  return { rules: [...byId.values()], skipped, disabled: [...loaded].filter((id) => !byId.has(id)) };
+  // A rule stays loaded while any setting turns it, or one of its sub-checks, on for some file
+  const severity = severityPolicy(config, aliases);
+  const rules = [...byId.values()].filter(severity.everEnabled);
+  const loadedIds = new Set(rules.map((r) => r.id));
+  return { rules, skipped, disabled: [...byId.keys()].filter((id) => !loadedIds.has(id)), severity };
 }
 
 export async function loadExtractors(
@@ -113,10 +102,12 @@ export async function loadExtractors(
   config: DlintConfig
 ): Promise<ExtractorDefinition[]> {
   // Built-in extractors (always loaded)
-  const { default: functionTags } = await import("../extractors/function-tags.js");
-  const { default: complexityAnalysis } = await import("../extractors/complexity-analysis.js");
-  const { default: domainDeclarations } = await import("../extractors/domain-declarations.js");
-  const { default: functionConsumption } = await import("../extractors/function-consumption.js");
+  const [{ default: functionTags }, { default: complexityAnalysis }, { default: domainDeclarations }, { default: functionConsumption }] = await Promise.all([
+    import("../extractors/function-tags.js"),
+    import("../extractors/complexity-analysis.js"),
+    import("../extractors/domain-declarations.js"),
+    import("../extractors/function-consumption.js"),
+  ]);
   const builtIn: ExtractorDefinition[] = [functionTags, complexityAnalysis, domainDeclarations, functionConsumption];
   const builtInIds = new Set(builtIn.map((e) => e.id));
 

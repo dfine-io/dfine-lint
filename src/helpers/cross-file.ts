@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { resolveSymbol } from "./ast.js";
+import { resolveCallee } from "./detection.js";
 
 const callBodyCache = new WeakMap<ts.Symbol, ts.Block | null>();
 const resolutionCaches = new WeakMap<ts.Program, ts.ModuleResolutionCache>();
@@ -78,12 +78,8 @@ export function resolveCallBody(
   checker: ts.TypeChecker,
   callExpr: ts.CallExpression
 ): ts.Block | null {
-  const ident = ts.isPropertyAccessExpression(callExpr.expression)
-    ? callExpr.expression.name
-    : callExpr.expression;
-  const symbol = checker.getSymbolAtLocation(ident);
-  if (!symbol) return null;
-  const resolved = resolveSymbol(checker, symbol);
+  const resolved = resolveCallee(callExpr, checker)?.symbol;
+  if (!resolved) return null;
   const cached = callBodyCache.get(resolved);
   if (cached !== undefined) return cached;
   // Overloads list their bodyless signatures first: the first declaration with a body wins
@@ -92,7 +88,7 @@ export function resolveCallBody(
   return body;
 }
 
-/** Check if a function body contains a call to any of the given function names */
+/** Check if a function body calls any of the given names. @deprecated It matches spellings: walk the body with resolveCallee instead; removed in 2.0. */
 export function bodyContainsCall(body: ts.Node, ...names: readonly string[]): boolean {
   const nameSet = new Set(names);
   let found = false;

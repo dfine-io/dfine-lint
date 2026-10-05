@@ -11,7 +11,7 @@
     "skipLibCheck": true,
     "types": [],
     "paths": {
-      "typescript": ["../../typescript"],
+      "typescript": ["./node_modules/typescript", "../../typescript"],
       "@dfine-io-gmbh/dlint": ["./build/index.d.ts"]
     }
   }

@@ -1,4 +1,5 @@
-// prefer-modern-api — includes, no-delete, no-object-assign, flatMap, at, startsWith, hasOwn.
+// prefer-modern-api — includes, no-delete, no-object-assign, flatMap, at, startsWith, hasOwn, zod validate.
+import { z } from "zod";
 declare const arr: number[];
 declare const str: string;
 declare const obj: Record<string, number>;
@@ -36,3 +37,18 @@ export function lastArg() {
 }
 export const arrStarts = arr.indexOf(5) === 0;
 export const fromIndex = str.indexOf("p", 1) === 0;
+// NEGATIVE: a receiver with indexOf but no lib includes() has nothing to switch to
+declare const queue: { indexOf(x: number): number };
+export const inQueue = queue.indexOf(5) !== -1;
+
+// zod-validate: only .success of a safeParse is read, and the schema offers validate()
+const Tag = z.string().min(1);
+export const isTag = (input: unknown) => Tag.safeParse(input).success; // EXPECT: prefer-modern-api
+export const isTagAsync = async (input: unknown) => (await Tag.safeParseAsync(input)).success; // EXPECT: prefer-modern-api
+// NEGATIVES: the parsed data is read, and a lookalike safeParse has no validate() to switch to
+export function readTag(input: unknown) {
+  const result = Tag.safeParse(input);
+  return result.success ? result.data : "";
+}
+declare const lookalike: { safeParse(x: unknown): { success: boolean } };
+export const isLookalike = (input: unknown) => lookalike.safeParse(input).success;

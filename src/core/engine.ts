@@ -9,15 +9,15 @@ import type {
   RuleContext,
   RuleDefinition,
   DlintConfig,
-  RuleOverride,
   LintTimings,
 } from "../types.js";
-import { resolveGroups } from "../config/groups.js";
+import type { SeverityPolicy } from "../config/severity.js";
 
 export function lint(
   opts: CliOptions,
   allRules: readonly RuleDefinition[],
-  config: DlintConfig
+  config: DlintConfig,
+  severity: SeverityPolicy,
 ): LintResult {
   const start = performance.now();
   const diagnostics: Diagnostic[] = [];
@@ -45,40 +45,6 @@ export function lint(
       ? allRules.filter((r) => opts.rules.includes(r.id))
       : allRules;
 
-  const fileOverrides = (config.overrides ?? []).filter(
-    (o): o is RuleOverride & { files: string[] } => !!o.files?.length,
-  );
-
-  // Global (non-file-scoped) sub-check disables: built-in/user groups set off, plus any
-  // global "ruleId:subCheckId" override set off. Applied to every file.
-  const globalDisabledSubChecks = new Set<string>(resolveGroups(config.groups).disabledSubChecks);
-  for (const o of config.overrides ?? []) {
-    if (!o.files?.length && o.severity === "off" && o.ruleId.includes(":")) {
-      globalDisabledSubChecks.add(o.ruleId);
-    }
-  }
-
-  function getDisabledSubChecks(ruleId: string, filePath: string): Set<string> {
-    const disabled = new Set<string>();
-    for (const full of globalDisabledSubChecks) {
-      if (full.startsWith(ruleId + ":")) disabled.add(full.slice(ruleId.length + 1));
-    }
-    for (const o of fileOverrides) {
-      if (o.severity !== "off") continue;
-      if (!o.files.some((g) => filePath.includes(g))) continue;
-      if (o.ruleId.startsWith(ruleId + ":")) {
-        disabled.add(o.ruleId.slice(ruleId.length + 1));
-      }
-    }
-    return disabled;
-  }
-
-  function isRuleDisabledForFile(ruleId: string, filePath: string): boolean {
-    return fileOverrides.some(
-      (o) => o.ruleId === ruleId && o.severity === "off" && o.files.some((g) => filePath.includes(g)),
-    );
-  }
-
   let fileCount = 0;
   for (const relPath of files) {
     const absPath = join(opts.path, relPath);
@@ -87,17 +53,26 @@ export function lint(
     fileCount++;
 
     for (const rule of rules) {
-      if (isRuleDisabledForFile(rule.id, relPath)) continue;
-      const disabledSubChecks = getDisabledSubChecks(rule.id, relPath);
+      if (!severity.runsIn(rule, relPath)) continue;
+      const ruleSeverity = severity.of(rule, undefined, relPath);
+      // Rules may ask per node, so each sub-check is resolved once per file
+      const subCheckOff = new Map<string, boolean>();
       const context = {
         program,
         checker,
         referenceIndex,
         sourceFile,
+        projectRoot: opts.path,
         referencesDir,
-        report: (diag) =>
-          diagnostics.push({ ...diag, file: relPath, severity: rule.severity }),
-        isSubCheckDisabled: (id: string) => disabledSubChecks.has(id),
+        report: (diag) => {
+          const level = diag.subCheck === undefined ? ruleSeverity : severity.of(rule, diag.subCheck, relPath);
+          if (level !== "off") diagnostics.push({ ...diag, file: relPath, severity: level });
+        },
+        isSubCheckDisabled: (id: string) => {
+          let off = subCheckOff.get(id);
+          if (off === undefined) subCheckOff.set(id, (off = severity.of(rule, id, relPath) === "off"));
+          return off;
+        },
         options: config.ruleOptions?.[rule.id] ?? {},
       } satisfies RuleContext;
       const ruleStart = performance.now();

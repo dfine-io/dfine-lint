@@ -38,3 +38,12 @@ const sandbox = { eval: (n: number) => n };
 export function t5(n: number) {
   return sandbox.eval(n);
 }
+
+// POSITIVE: globalThis.eval is the global eval
+export function t6(code: string) {
+  return globalThis.eval(code); // EXPECT: no-implied-eval
+}
+
+// POSITIVE: an alias of Function still compiles a string
+const F = Function;
+export const viaAlias = F("return 1"); // EXPECT: no-implied-eval

@@ -23,8 +23,9 @@ const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((m: stri
 type ChainResult = readonly string[] | null;
 const reachCache = new WeakMap<ts.Program, Map<string, ChainResult>>();
 
-function isServerOnlyRoot(specifier: string, nextServerApis: Set<string>): boolean {
-  return nextServerApis.has(specifier) || NODE_BUILTINS.has(specifier);
+// A builtin name an installed package resolves (the npm events or buffer polyfill) is that package, not the builtin
+function isServerOnlyRoot(specifier: string, resolved: ts.ResolvedModuleFull | undefined, nextServerApis: Set<string>): boolean {
+  return nextServerApis.has(specifier) || (NODE_BUILTINS.has(specifier) && resolved === undefined);
 }
 
 // DFS: does `filePath` (transitively, via value imports) reach a server-only source?
@@ -50,13 +51,14 @@ function reachesServerOnly(program: ts.Program, filePath: string, stack: Set<str
 
   stack.add(filePath);
   for (const literal of collectValueImports(program, sf)) {
-    if (isServerOnlyRoot(literal.text, nextServerApis)) {
+    const resolved = resolveImportedModule(program, literal);
+    if (isServerOnlyRoot(literal.text, resolved, nextServerApis)) {
       stack.delete(filePath);
       const chain = [filePath];
       memo.set(filePath, chain);
       return chain;
     }
-    const target = resolveImportedModule(program, literal)?.resolvedFileName;
+    const target = resolved?.resolvedFileName;
     if (!target) continue;
     const sub = reachesServerOnly(program, target, stack, nextServerApis);
     if (sub) {
@@ -83,22 +85,22 @@ export default defineRule({
   check(ctx) {
     if (!hasDirective(ctx.sourceFile, "use client")) return;
     const nextServerApis = ctx.options.nextServerApis ? new Set(ctx.options.nextServerApis as string[]) : NEXT_SERVER_APIS;
-    const cwd = ctx.program.getCurrentDirectory();
     const fromFile = ctx.sourceFile.fileName;
 
     for (const literal of collectValueImports(ctx.program, ctx.sourceFile)) {
-      if (isServerOnlyRoot(literal.text, nextServerApis)) {
+      const resolved = resolveImportedModule(ctx.program, literal);
+      if (isServerOnlyRoot(literal.text, resolved, nextServerApis)) {
         ctx.reportAt(literal.parent, `Client component imports server-only resource "${literal.text}" — move behind a Server Action`, {
           action: "move-behind-server-action",
           pattern: "Call the server resource from a Server Action ('use server'); client invokes the action.",
         });
         continue;
       }
-      const target = resolveImportedModule(ctx.program, literal)?.resolvedFileName;
+      const target = resolved?.resolvedFileName;
       if (!target) continue;
       const chain = reachesServerOnly(ctx.program, target, new Set(), nextServerApis);
       if (chain) {
-        ctx.reportAt(literal.parent, `Client reaches server-only module via: ${formatChain(fromFile, chain, cwd)} — split the module or route through a Server Action`, {
+        ctx.reportAt(literal.parent, `Client reaches server-only module via: ${formatChain(fromFile, chain, ctx.projectRoot)} — split the module or route through a Server Action`, {
           action: "split-or-bridge",
           pattern: "Move the server-only part behind 'use server' / a server-only sibling; keep the pure part client-safe.",
         });

@@ -19,3 +19,11 @@ export function partial(cfg: Partial<Cfg>) { // EXPECT: narrow-param-type
 export function small(p: { a: number }) {
   return p.a;
 }
+
+// NEGATIVE: a project type named Partial is not the lib's Partial
+export namespace localTypes {
+  type Partial<X> = { [K in keyof X]?: X[K] };
+  export function localPartial(cfg: Partial<Cfg>) {
+    return cfg.x;
+  }
+}

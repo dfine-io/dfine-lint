@@ -2,7 +2,7 @@
 // without consuming them. A unit = a prop, a member path (handlers.a), or one {...spread}; identity
 // and callback-ness come from the type checker, so bundling/shadowing/data-rendering don't false-fire.
 import ts from "typescript";
-import { defineRule, valueSymbolOf } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee, valueSymbolOf } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -23,11 +23,12 @@ function isCustomElement(node: ts.Node): boolean {
   return ts.isIdentifier(tag) ? !isIntrinsicTag(tag.text) : true;
 }
 
-function hasHookCalls(body: ts.Block): boolean {
+// React's hook-name rule on the resolved callee: useFoo() is a hook, userLabel() is not (as rules-of-hooks HOOK_NAME)
+function hasHookCalls(body: ts.Block, checker: ts.TypeChecker): boolean {
   let found = false;
   function visit(node: ts.Node): void {
     if (found) return;
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text.startsWith("use")) {
+    if (ts.isCallExpression(node) && /^use[A-Z0-9]/.test(resolveCallee(node, checker)?.name ?? "")) {
       found = true;
       return;
     }
@@ -93,7 +94,7 @@ export default defineRule({
     description: "Component forwards props without consuming — use stores or hooks",
   },
   check(ctx) {
-    if (!ctx.sourceFile.fileName.endsWith(".tsx")) return;
+    if (ctx.sourceFile.languageVariant !== ts.LanguageVariant.JSX) return;
     const checker = ctx.checker;
     const minForwarded = (ctx.options.minForwarded as number) ?? MIN_FORWARDED;
     const minCallbacks = (ctx.options.minCallbacks as number) ?? MIN_CALLBACKS;
@@ -185,7 +186,7 @@ export default defineRule({
       }).length;
       if (callbackCount < minCallbacks) return;
 
-      const generatesData = hasHookCalls(node.body);
+      const generatesData = hasHookCalls(node.body, checker);
       if (generatesData && forwardedUnits.length <= maxShallowProps) return;
 
       let componentName = "Component";

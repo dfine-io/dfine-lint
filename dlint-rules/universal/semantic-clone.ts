@@ -5,8 +5,9 @@ import ts from "typescript";
 import {
   defineRule,
   getExportedFunctions,
+  isProjectSourceFile,
   tokenizeFile,
-  tokenSimilarity,
+  tokenBagSimilarity,
   type TokenizedBlock,
 } from "@dfine-io-gmbh/dlint";
 
@@ -49,8 +50,20 @@ function areDifferentRoutes(fileA: string, fileB: string, minRouteDistance: numb
   return dirA.length - shared >= minRouteDistance && dirB.length - shared >= minRouteDistance;
 }
 
+// A parameter that accepts anything (unknown, any, object, {} or only optional members) proves no shared contract
+function isVacuousParam(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive)) return true;
+  if (!(type.flags & ts.TypeFlags.Object)) return false;
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return false;
+  if (!type.getProperties().every((p) => p.flags & ts.SymbolFlags.Optional)) return false;
+  return checker.getIndexInfosOfType(type).every((info) => !!(info.type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)));
+}
+
 function signaturesMatch(a: FnEntry, b: FnEntry, checker: ts.TypeChecker): boolean {
   if (a.paramTypes.length !== b.paramTypes.length) return false;
+  const vacuous = (t: ts.Type): boolean => isVacuousParam(t, checker);
+  // Zero parameters prove nothing either way; only a non-empty all-vacuous list rejects the pair
+  if (a.paramTypes.length > 0 && a.paramTypes.every(vacuous) && b.paramTypes.every(vacuous)) return false;
   for (let i = 0; i < a.paramTypes.length; i++) {
     const pa = a.paramTypes[i];
     const pb = b.paramTypes[i];
@@ -77,7 +90,7 @@ function buildSemanticMap(
   const entries: FnEntry[] = [];
 
   for (const sf of program.getSourceFiles()) {
-    if (sf.isDeclarationFile || sf.fileName.includes("node_modules")) continue;
+    if (!isProjectSourceFile(sf)) continue;
     const blocks = tokenizeFile(sf);
     const blockMap = new Map<string, TokenizedBlock>();
     for (const block of blocks) blockMap.set(block.name, block);
@@ -108,10 +121,14 @@ function buildSemanticMap(
       if (!a || !b) continue;
       if (a.file === b.file) continue;
       if (areDifferentRoutes(a.file, b.file, minRouteDistance)) continue;
-      const lenRatio = Math.min(a.tokens.length, b.tokens.length) / Math.max(a.tokens.length, b.tokens.length);
-      if (lenRatio < minLengthRatio) continue;
+      const shorter = Math.min(a.tokens.length, b.tokens.length);
+      const longer = Math.max(a.tokens.length, b.tokens.length);
+      if (shorter / longer < minLengthRatio) continue;
+      // Multiset Jaccard never exceeds (shorter-1)/(longer-1) bigrams: pairs below the threshold skip the signature check
+      if ((shorter - 1) / (longer - 1) < minSemanticSimilarity) continue;
       if (!signaturesMatch(a, b, checker)) continue;
-      const sim = tokenSimilarity(a.tokens, b.tokens);
+      // The same measure as syntactic-clone; above the threshold syntactic-clone owns the pair if it has 10+ statements
+      const sim = tokenBagSimilarity(a.tokens, b.tokens);
       if (sim < minSemanticSimilarity || sim >= minSyntacticThreshold) continue;
       pairs.push({ aFile: a.file, aName: a.name, bFile: b.file, bName: b.name, similarity: sim });
     }

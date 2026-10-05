@@ -1,8 +1,8 @@
 // Flags weak hash algorithms (md5/sha1/...) passed to crypto.createHash/createHmac. The algorithm is
 // read from a string-literal arg of a symbol-confirmed `crypto` call — a closed, authoritative set,
-// not a name heuristic. Self-contained: resolves the callee symbol to crypto (alias-proof).
+// not a name heuristic. Self-contained: resolves the callee into Node's crypto module (alias-proof).
 import ts from "typescript";
-import { defineRule, resolveSymbol } from "@dfine-io-gmbh/dlint";
+import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
 // CONFIG - tune for your project; the rule logic below stays generic
@@ -25,20 +25,8 @@ export default defineRule({
 
     ctx.walk((node) => {
       if (!ts.isCallExpression(node) || node.arguments.length === 0) return;
-      const callee = node.expression;
-      let nameId: ts.Identifier | undefined;
-      if (ts.isIdentifier(callee)) nameId = callee;
-      else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name))
-        nameId = callee.name;
-      if (!nameId) return;
-      const sym = checker.getSymbolAtLocation(nameId);
-      if (!sym) return;
-      const resolved = resolveSymbol(checker, sym);
-      if (!hashMethods.has(resolved.name)) return;
-      const fromCrypto = (resolved.declarations ?? []).some((decl) =>
-        /\/@types\/node\/crypto\.d\.ts$/.test(decl.getSourceFile().fileName),
-      );
-      if (!fromCrypto) return;
+      const callee = resolveCallee(node, checker);
+      if (!callee || callee.moduleName !== "crypto" || !hashMethods.has(callee.name)) return;
       const algo = node.arguments[0];
       if (!algo || !ts.isStringLiteral(algo)) return;
       if (!weakAlgorithms.has(algo.text.toLowerCase())) return;

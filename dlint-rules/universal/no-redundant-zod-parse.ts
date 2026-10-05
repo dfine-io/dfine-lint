@@ -2,9 +2,9 @@
 // schema's output. The input must NOT originate from a trust boundary (string / unknown / any) — those
 // are legit parses. .safeParse() is never flagged: choosing safeParse (handling success:false) is an
 // inherently defensive act, so it is always a validation boundary regardless of the static type.
-// Structural Zod detection: receiver type exposes both `parse` and `safeParse` methods.
+// Zod identity: parse and catch resolve to methods zod declares, under any alias or wrapper type.
 import ts from "typescript";
-import { defineRule, isAssignableTo, hasDirective } from "@dfine-io-gmbh/dlint";
+import { defineRule, isAssignableTo, hasDirective, resolveCallee } from "@dfine-io-gmbh/dlint";
 
 const WIDELY_TYPED_FLAGS =
   ts.TypeFlags.String |
@@ -45,18 +45,20 @@ function typeContainsWidelyTyped(type: ts.Type, checker: ts.TypeChecker, seen: S
   return false;
 }
 
-function isZodSchemaReceiver(receiverType: ts.Type): boolean {
-  return !!receiverType.getProperty("parse") && !!receiverType.getProperty("safeParse");
+// schema.method(...) where zod declares the member; z.parse(schema, x) is an exported const, not a member
+function isZodMethodCall(node: ts.CallExpression, checker: ts.TypeChecker, name: string): boolean {
+  const callee = resolveCallee(node, checker);
+  return callee?.packageName === "zod" && callee.name === name && (callee.symbol.flags & ts.SymbolFlags.Variable) === 0;
 }
 
 // Walks the receiver chain of `.parse(x)` and returns true when any upstream call
 // is `.catch(fallback)`. That chain is an explicit defensive re-validation (a
 // JSONB / 3rd-party SDK boundary pattern), so the parse is load-bearing even when
 // the argument's TypeScript type already matches the schema output.
-function receiverChainHasCatch(receiver: ts.Expression): boolean {
+function receiverChainHasCatch(receiver: ts.Expression, checker: ts.TypeChecker): boolean {
   let current: ts.Expression = receiver;
   while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
-    if (current.expression.name.text === "catch") return true;
+    if (isZodMethodCall(current, checker, "catch")) return true;
     current = current.expression.expression;
   }
   return false;
@@ -86,12 +88,10 @@ export default defineRule({
       // so it is always a validation boundary — never redundant — regardless of the argument's static type.
       if (node.expression.name.text !== "parse") return;
       if (node.arguments.length === 0) return;
-
-      const receiverType = ctx.checker.getTypeAtLocation(node.expression.expression);
-      if (!isZodSchemaReceiver(receiverType)) return;
+      if (!isZodMethodCall(node, ctx.checker, "parse")) return;
 
       // Defensive re-validation via `.catch(fallback)` is a legitimate trust-boundary pattern (JSONB / SDK output)
-      if (receiverChainHasCatch(node.expression.expression)) return;
+      if (receiverChainHasCatch(node.expression.expression, ctx.checker)) return;
 
       const outputType = getSchemaOutputType(node, ctx.checker);
       if (!outputType) return;

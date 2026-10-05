@@ -10,4 +10,6 @@ export default {
   include: ["fixtures/**/*.ts"],
   exclude: ["node_modules"],
   tsconfig: "./tsconfig.json",
+  // semantic-clone's fixture pairs a zero-parameter function too
+  ruleOptions: { "semantic-clone": { minParams: 0 } },
 } satisfies DlintConfig;

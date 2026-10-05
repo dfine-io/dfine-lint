@@ -1,4 +1,17 @@
 // no-non-literal-require — require()/import() with a parameter-derived specifier loads attacker modules.
+import { createRequire } from "node:module";
+const localRequire = createRequire(import.meta.url);
+
+// POSITIVE: a createRequire() result is Node's require as well
+export function loadVia(mod: string) {
+  return localRequire(mod); // EXPECT: no-non-literal-require
+}
+
+// NEGATIVE: a local binding named require is not Node's require
+export function shadowed(mod: string) {
+  const require = (m: string) => m;
+  return require(mod);
+}
 
 // POSITIVE: dynamic import() with a parameter specifier
 export async function plugin(name: string) {

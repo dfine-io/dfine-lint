@@ -28,19 +28,28 @@ export default defineRule({
           node.expression.text === "arguments" &&
           (node.name.text === "caller" || node.name.text === "callee")) {
         const argsSym = ctx.checker.getSymbolAtLocation(node.expression);
-        if (argsSym && (argsSym.flags & ts.SymbolFlags.FunctionScopedVariable)) {
+        // The built-in arguments object has no declaration; a binding named arguments would have one
+        if (argsSym && !argsSym.declarations?.length) {
           ctx.reportAt(node, `arguments.${node.name.text} is deprecated — use named functions`, {
             action: "use-named-function", pattern: "Use named function reference instead",
           });
         }
       }
 
-      // no-extend-native — prototype assignment on global constructors
-      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ts.isPropertyAccessExpression(node.left) && node.left.name.text === "prototype" &&
-          ts.isPropertyAccessExpression(node.left.expression)) {
-        const objSym = ctx.checker.getSymbolAtLocation(node.left.expression.expression);
-        if (objSym && isLibDeclaration(objSym)) {
+      // no-extend-native — X.prototype = … or X.prototype.m = … on a lib constructor (Array, not foo.constructor)
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        let target: ts.Expression = node.left;
+        let member: ts.PropertyAccessExpression | undefined;
+        while (ts.isPropertyAccessExpression(target) && target.name.text !== "prototype") {
+          member = target;
+          target = target.expression;
+        }
+        const objSym = ts.isPropertyAccessExpression(target) ? ctx.checker.getSymbolAtLocation(target.expression) : undefined;
+        const isConstructor = !!objSym && ctx.checker.getTypeOfSymbol(objSym).getConstructSignatures().length > 0;
+        // A member the lib declares is filled in or stubbed (a polyfill, a test double), not added
+        const memberSym = member && ctx.checker.getSymbolAtLocation(member.name);
+        const standardMember = !!memberSym && isLibDeclaration(memberSym);
+        if (objSym && isConstructor && isLibDeclaration(objSym) && !standardMember) {
           ctx.reportAt(node, "Do not extend native prototypes", {
             action: "no-extend", pattern: "Create utility function instead of modifying built-in prototype",
           });

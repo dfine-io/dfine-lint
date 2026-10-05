@@ -1,9 +1,15 @@
-// performance — regex-in-loop, push-in-map, delete-on-array, long-chain, barrel-import.
-// (sync-io omitted: needs node:fs — covered vs real code.)
+// performance — regex-in-loop, sync-io, push-in-map, delete-on-array, long-chain, barrel-import.
 import { barrelValue } from "./barrel"; // EXPECT: performance
 import type { BarrelShape } from "./barrel"; // NEGATIVE: a type import is erased, nothing to tree-shake
+import { localValue } from "./no-re-export.fixture"; // NEGATIVE: a file that re-exports and declares code is no barrel
+import { barrelValue as byName } from "./barrel/reexports"; // EXPECT: performance
+import { barrelValue as byAlias } from "@fixtures/barrel/reexports"; // EXPECT: performance
+import { readFileSync as readSync } from "node:fs";
 declare const arr: number[];
-export const fromBarrel: BarrelShape = { size: barrelValue };
+export const fromBarrel: BarrelShape = { size: barrelValue + localValue + byName + byAlias };
+
+// sync-io: an aliased fs import still blocks the event loop
+export const config = readSync("config.json", "utf8"); // EXPECT: performance
 
 export function regexInLoop(items: string[]) {
   for (const s of items) {
@@ -20,6 +26,10 @@ export function pushInMap() {
   const out: number[] = [];
   arr.map((x) => out.push(x)); // EXPECT: performance
 }
+
+// NEGATIVE: push() on a project queue is no array mutation
+declare const queue: { push(x: number): void };
+export const queued = arr.map((x) => queue.push(x));
 
 export function deleteOnArray() {
   delete arr[0]; // EXPECT: performance

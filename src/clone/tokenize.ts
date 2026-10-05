@@ -151,26 +151,44 @@ export function tokenizeFile(sf: ts.SourceFile): TokenizedBlock[] {
   return blocks;
 }
 
-const bigramCache = new WeakMap<readonly string[], Set<string>>();
+const bigramCountCache = new WeakMap<readonly string[], Map<string, number>>();
 
-// Bigram set of a token array, cached: the clone rules compare each array against many others
-function bigramsOf(tokens: readonly string[]): Set<string> {
-  const cached = bigramCache.get(tokens);
+// Bigram counts of a token array, cached: the clone rules compare each array against many others
+function bigramCountsOf(tokens: readonly string[]): Map<string, number> {
+  const cached = bigramCountCache.get(tokens);
   if (cached) return cached;
-  const bigrams = new Set<string>();
-  for (let i = 0; i < tokens.length - 1; i++) bigrams.add(`${tokens[i]}|${tokens[i + 1]}`);
-  bigramCache.set(tokens, bigrams);
-  return bigrams;
+  const counts = new Map<string, number>();
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const bg = `${tokens[i]}|${tokens[i + 1]}`;
+    counts.set(bg, (counts.get(bg) ?? 0) + 1);
+  }
+  bigramCountCache.set(tokens, counts);
+  return counts;
 }
 
-/** Compute Jaccard similarity between two token arrays; sequences without bigrams score 0 */
+/** Bigram set Jaccard between two token arrays; sequences without bigrams score 0. @deprecated Repeats saturate a set: use tokenBagSimilarity; removed in 2.0. */
 export function tokenSimilarity(a: readonly string[], b: readonly string[]): number {
-  const bigramsA = bigramsOf(a);
-  const bigramsB = bigramsOf(b);
+  const bigramsA = bigramCountsOf(a);
+  const bigramsB = bigramCountsOf(b);
   let intersection = 0;
-  for (const bg of bigramsA) {
+  for (const bg of bigramsA.keys()) {
     if (bigramsB.has(bg)) intersection++;
   }
   const union = bigramsA.size + bigramsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/** Multiset Jaccard over bigrams: a repeated bigram counts each time, not once */
+export function tokenBagSimilarity(a: readonly string[], b: readonly string[]): number {
+  const countsA = bigramCountsOf(a);
+  const countsB = bigramCountsOf(b);
+  let intersection = 0;
+  let union = 0;
+  for (const [bg, n] of countsA) {
+    const m = countsB.get(bg) ?? 0;
+    intersection += Math.min(n, m);
+    union += Math.max(n, m);
+  }
+  for (const [bg, m] of countsB) if (!countsA.has(bg)) union += m;
   return union === 0 ? 0 : intersection / union;
 }

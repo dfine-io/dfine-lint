@@ -48,3 +48,9 @@ function exec3(s: string) {
 export function ok(x: string) {
   return exec3(x);
 }
+
+// NEGATIVE: a lookalike exec on a project object is not child_process.exec
+const shell = { exec: (cmd: string) => cmd };
+export function lookalike(cmd: string) {
+  return shell.exec(cmd);
+}

@@ -3,11 +3,15 @@ import type { DlintConfig } from "@dfine-io-gmbh/dlint";
 // Proves `ruleOptions` changes a rule's behavior without copying the rule. The 8-line sample
 // would NOT trip max-file-lines at its default (300 LoC); it fires only because ruleOptions sets
 // maxLines: 5. max-file-lines is in the opinionated group (off by default), so the group is enabled.
+// effect-cleanup's cleanupMap takes one name as well as a list per setup method.
 export default {
   rulesDir: "../dlint-rules/universal",
   severity: "error",
   groups: [{ id: "opinionated", severity: "error" }],
-  ruleOptions: { "max-file-lines": { maxLines: 5 } },
+  ruleOptions: {
+    "max-file-lines": { maxLines: 5 },
+    "effect-cleanup": { cleanupMap: { addEventListener: "removeEventListener" } },
+  },
   include: ["**/*.ts"],
   exclude: ["node_modules"],
   tsconfig: "options-island/tsconfig.json",

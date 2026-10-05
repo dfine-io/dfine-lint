@@ -1,14 +1,14 @@
 // Flags useState anti-patterns that must be encoded as discriminated unions.
 // 4 sub-checks, all structural: boolean-with-coupled-ref (setter + ref.current co-written
-// in same callback body), multiple-nullable-state, status-plus-nullable, state-cluster-count.
+// in same callback body), multiple-nullable-state, status-plus-nullable (both setters co-written), state-cluster-count.
 // TypeChecker + Symbol-Resolution only, no name regexes.
 import ts from "typescript";
 import {
   defineRule,
-  isFromPackage,
   isLibDeclaration,
   isNullableType,
   isWriteTarget,
+  resolveCallee,
 } from "@dfine-io-gmbh/dlint";
 
 // ===========================================================================
@@ -33,11 +33,10 @@ function matchHookKind(
   call: ts.CallExpression,
   checker: ts.TypeChecker,
 ): HookKind | null {
-  if (!ts.isIdentifier(call.expression)) return null;
-  if (!isFromPackage(call.expression, checker, "react")) return null;
-  const text = call.expression.text;
-  if (text === "useState" || text === "useReducer" || text === "useRef")
-    return text;
+  const callee = resolveCallee(call, checker);
+  if (callee?.packageName !== "react") return null;
+  const name = callee.name;
+  if (name === "useState" || name === "useReducer" || name === "useRef") return name;
   return null;
 }
 
@@ -200,24 +199,20 @@ function wroteRefCurrentInBody(
   return found;
 }
 
+// Some callback or nested function writes both sides in one body: the test decides what both sides are
 function hasCoupledCallback(
   fnBody: ts.Node,
-  setters: ReadonlySet<ts.Symbol>,
-  refs: ReadonlySet<ts.Symbol>,
-  checker: ts.TypeChecker,
+  writesBoth: (body: ts.Block) => boolean,
 ): boolean {
   let coupled = false;
   function walk(n: ts.Node): void {
     if (coupled) return;
     if (
-      (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) &&
+      (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) &&
       n.body &&
       ts.isBlock(n.body)
     ) {
-      if (
-        calledSetterInBody(n.body, setters, checker) &&
-        wroteRefCurrentInBody(n.body, refs, checker)
-      ) {
+      if (writesBoth(n.body)) {
         coupled = true;
         return;
       }
@@ -238,12 +233,6 @@ export default defineRule({
   check(ctx) {
     const stateClusterThreshold =
       (ctx.options.stateClusterThreshold as number) ?? STATE_CLUSTER_THRESHOLD;
-
-    if (
-      !ctx.sourceFile.fileName.endsWith(".tsx") &&
-      !ctx.sourceFile.fileName.endsWith(".ts")
-    )
-      return;
 
     ctx.walk((node) => {
       if (
@@ -279,9 +268,9 @@ export default defineRule({
             node.body &&
             hasCoupledCallback(
               node.body,
-              setterSymbols,
-              refSymbols,
-              ctx.checker,
+              (body) =>
+                calledSetterInBody(body, setterSymbols, ctx.checker) &&
+                wroteRefCurrentInBody(body, refSymbols, ctx.checker),
             )
           ) {
             const first = boolStates[0];
@@ -294,6 +283,7 @@ export default defineRule({
                   pattern:
                     "type State = {phase:'idle'} | {phase:'loading'; id} | {phase:'loaded'; id; data}",
                 },
+                "boolean-with-coupled-ref",
               );
             }
           }
@@ -313,6 +303,7 @@ export default defineRule({
                 pattern:
                   "single useState<{phase:'idle'} | {phase:'loaded'; ...fields}>",
               },
+              "multiple-nullable-state",
             );
           }
         }
@@ -325,8 +316,21 @@ export default defineRule({
         const nullableObjects = states.filter(
           (d) => isNullableType(d.stateType) && hasObjectMember(d.stateType),
         );
-        if (statusStates.length > 0 && nullableObjects.length > 0) {
+        const dataSetters = new Set(
+          nullableObjects.flatMap((d) => getSetterSymbol(d, ctx.checker) ?? []),
+        );
+        if (statusStates.length > 0 && dataSetters.size > 0 && node.body) {
+          const fnBody = node.body;
           for (const s of statusStates) {
+            // A union that only steers the view (a tab) is never written together with the data
+            const statusSetter = getSetterSymbol(s, ctx.checker);
+            const coupled = statusSetter && hasCoupledCallback(
+              fnBody,
+              (body) =>
+                calledSetterInBody(body, new Set([statusSetter]), ctx.checker) &&
+                calledSetterInBody(body, dataSetters, ctx.checker),
+            );
+            if (!coupled) continue;
             ctx.reportAt(
               s.node,
               `Status union '${s.stateName}' + nullable data state -- fold data into union variants`,
@@ -335,6 +339,7 @@ export default defineRule({
                 pattern:
                   "type State = {status:'idle'} | {status:'loaded'; data: T}",
               },
+              "status-plus-nullable",
             );
           }
         }
@@ -353,6 +358,7 @@ export default defineRule({
                   "Use useReducer with discriminated state union instead",
                 reference: "https://react.dev/reference/react/useReducer",
               },
+              "state-cluster-count",
             );
           }
         }

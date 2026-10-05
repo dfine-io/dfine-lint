@@ -55,7 +55,7 @@ export function defineRule(opts: DefineRuleOptions): RuleDefinition {
           }
           return { start, length: end - start, newText: "" };
         },
-        reportAt(node: ts.Node, message: string, advisory?: Advisory) {
+        reportAt(node: ts.Node, message: string, advisory?: Advisory, subCheck?: string) {
           const pos = ctx.sourceFile.getLineAndCharacterOfPosition(
             node.getStart(ctx.sourceFile)
           );
@@ -71,6 +71,7 @@ export function defineRule(opts: DefineRuleOptions): RuleDefinition {
             column: pos.character + 1,
             message,
             advisory: resolved,
+            subCheck,
           });
         },
       } satisfies EnhancedRuleContext;

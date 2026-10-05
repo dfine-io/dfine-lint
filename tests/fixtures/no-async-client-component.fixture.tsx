@@ -20,4 +20,9 @@ export async function fetchValue() {
   return 1;
 }
 
+// NEGATIVE: an async helper returning a RefObject (or any { type, props, key } shape) is no component
+export async function loadRef(): Promise<React.RefObject<number | null>> {
+  return React.createRef<number>();
+}
+
 void React;
