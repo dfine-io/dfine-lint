@@ -1,183 +1,73 @@
 ---
 name: dfine-lint
 description: >-
-  Author, test, configure, and ship rules for dfine-lint (dlint) - the semantic TypeScript
-  linter that runs directly on the TS Compiler API and TypeChecker (no ESLint/AST layer).
-  Use this skill WHENEVER the work touches dlint: writing or changing a rule in
-  dlint-rules/ or a project rulesDir, building a rule via defineRule, writing rule fixtures
-  or running tests/run.sh, configuring dlint.config.ts (severity, groups, ruleOptions,
-  overrides), building a project rule pack / plugin, or reasoning about the dlint SDK
-  helpers (ctx.checker, ctx.walk, resolveSymbol, resolveCallee, isFromPackage, etc.). Trigger
-  it even when the user just says "add a lint rule", "catch X with the type checker", "make a dlint
-  rule", "tune a rule for our repo", or "why is this rule firing" - dlint has hard
-  principles and a no-duplication gate that are easy to violate without this skill.
+  Authors, tests, configures and ships rules for dfine-lint (dlint), the semantic TypeScript
+  linter that runs directly on the TS Compiler API and TypeChecker, with no ESLint or AST layer.
+  Use it whenever the work touches dlint: writing or changing a rule in dlint-rules/ or a
+  project rulesDir, building a rule via defineRule, writing rule fixtures or running
+  tests/run.sh, configuring dlint.config.ts (severity, groups, ruleOptions, overrides),
+  building a project rule pack, or reasoning about the dlint SDK helpers. Trigger it even when
+  the user only says "add a lint rule", "catch X with the type checker", "make a dlint rule",
+  "tune a rule for our repo" or "why is this rule firing" - dlint has hard principles and a
+  no-duplication gate that are easy to break without this skill.
 ---
 
-# dlint - authoring, testing, configuring, and shipping rules
+# dlint Handbook
 
-dlint is a semantic TypeScript linter built **directly on the TypeScript Compiler API and
-TypeChecker** - the same `ts.Program` / `ts.TypeChecker` that `tsc` uses. There is no ESLint,
-no Language Server, no separate AST. Each rule is one `.ts` file loaded at runtime via jiti
-(shipped as source). The engine builds the program once and shares it across every rule.
+## Engine
 
-Read this whole file first. For depth, load the reference files as noted:
+Applies to every question about how dlint runs a rule.
 
-- `references/sdk-api.md` - rule context, `defineRule`, helper catalogue, deterministic patterns.
-- `references/testing.md` - fixtures, `// EXPECT` markers, `tests/run.sh`, island tests.
-- `references/config-and-shipping.md` - `DlintConfig`, precedence, `groups`, `ruleOptions`.
+- Expect one `ts.Program` and `ts.TypeChecker`, built once and shared by every rule - as in `tsc`.
+- Expect each rule as one `.ts` file, loaded at runtime from source via jiti - no build step.
+- Expect no ESLint, no language server and no separate AST.
 
-## The three principles - non-negotiable
+## Principles
 
-Every rule you touch must hold all three. They are what makes dlint trustworthy as a
-zero-config CI gate; violating them produces flaky, un-shippable rules.
+Applies to every dlint rule you write or change - a rule that breaks one is flaky and unshippable.
 
-**1. Compiler-exclusive: stay maximally close to the TypeChecker, add no abstraction.**
-Resolve through `ctx.checker` and the TS AST directly. Never introduce a wrapper AST, a
-parallel parser, or a regex over source text to answer a question the compiler can answer.
-If TypeScript knows it - the type, the symbol, the import origin, the nullability - ask the
-compiler. This is why the type information a rule sees is identical to the compiler's, and
-why results are reproducible.
+- Resolve every question through `ctx.checker` and the TS AST - never a wrapper AST.
+- Answer no compiler question with a parallel parser or a regex over the source.
+- Know why: the rule then sees the compiler's own type information, so results reproduce.
+- Decide on symbols, types and AST structure - never on an identifier spelling or a path substring.
+- Use `resolveCallee`, `resolveSymbol`, `isTypeFromPackage`, `isLibDeclaration` for that.
+- Use `isProjectSourceFile`, type flags and structural AST checks as well - see `sdk-api.md`.
+- Know why: same code + same types -> same findings, in every run and every codebase.
+- Use a name check only as a cheap prefilter - the resolved symbol or type decides.
+- Write no per-file, per-name or per-example `if` - a rule that needs one is wrong.
+- Prove no existing rule covers the concern before you author one - see "Rule or config".
+- Name the existing rules you checked and why each one does not fit.
+- Treat a finding on real code as a codebase bug - fix the code, not the rule.
+- Loosen a rule only for a true false positive, and only with a type or symbol condition.
+- Build only on public compiler APIs - never on TypeScript internals.
 
-**2. No string heuristics: deterministic, dynamic, scalable.**
-A rule must not key off identifier spellings, path substrings, or "this looks like X" name
-matching to decide whether code is a bug. Use symbol resolution (`resolveCallee`,
-`resolveSymbol`, `isTypeFromPackage`, `isLibDeclaration`, `isProjectSourceFile`), type flags,
-and structural AST checks. A correct rule needs **no per-case `if`-patches** - if you find
-yourself special-casing a specific file, name, or example to make a finding go away, the rule
-is wrong (or the finding is a real codebase bug - see "Rule philosophy" below). Determinism
-means: same code + same types -> same findings, every run. This also makes a rule scale to any
-codebase, not just the one in front of you.
+## Rule or config
 
-- Replace each string check with the compiler fact it guesses at - see `references/sdk-api.md`.
-- Keep a name check only as a cheap prefilter - the resolved symbol or type decides.
+Applies before any new rule - dlint ships 86 universal rules, most of them tunable.
 
-**3. No duplication: before authoring a new rule, prove no existing rule covers it.**
-dlint ships ~86 universal rules, and most tunable values are exposed via `ruleOptions` - a
-project changes a threshold, list, or allow-set without copying the rule. Before writing a
-new rule, check:
+1. Run `dlint --list-rules` - JSON id + description of every loaded rule, project rules included.
+2. Grep `dlint-rules/universal/` and read the README rule table.
+3. Keep an existing rule that already flags the concern - enable its group if it is opinionated.
+4. Set a wrong threshold, list, allow-set, method set or route pair in `ruleOptions`.
+5. Never copy a universal rule into a `rulesDir` to change a value - configure it instead.
+6. Author a new rule only for a concern no rule covers - its id names the bug it finds.
 
-- **Already detected?** Run `dlint --list-rules` (JSON: id + one-line description of every loaded
-  rule, project rules included), grep `dlint-rules/universal/`, and read the README rule table.
-- **Coverable by `ruleOptions`?** A threshold, allow/deny list, method set, or route pairs:
-  if yes, configure it; do not create a near-duplicate and do not copy a
-  universal rule into a `rulesDir` just to change a value.
-- **Genuinely new concern?** Only then author a rule, with a descriptive id naming the bug it finds.
+## Where to look
 
-State which existing rules you checked and why they do not fit before creating anything new.
+| Task | Read |
+| --- | --- |
+| Write a rule: skeleton, context, CONFIG block, report, autofix | `references/authoring.md` |
+| Find a helper, a type or the compiler fact behind a string check | `references/sdk-api.md` |
+| Write a fixture, run the suite, add an island test | `references/testing.md` |
+| Configure a project, set severities, ship a rule pack, use the CLI | `references/config-and-shipping.md` |
 
-### Rule philosophy (carry these too)
+## Verify
 
-- **Codebase first**: Treat a finding as a codebase bug - fix the code, not the rule.
-- **Generic fixes**: Loosen a rule only for a true false positive, with a type or symbol condition.
-- **Stable APIs**: Build only on public compiler APIs that hold in every case - never on internals.
+Applies to every rule change - run the steps in order and fix task errors first.
 
-## Before you start: is this a new rule, or config?
+1. Run `pnpm build` - `tsc` compiles the engine clean.
+2. Run `pnpm typecheck` - the only step that type-checks the rules, expect 0 errors.
+3. Run `pnpm lint:dlint` (`node build/cli.js --format compact`) - dlint lints itself to 0/0.
+4. Run `bash tests/run.sh` - every fixture passes, true and false positives alike.
 
-```
-Need to catch something or change behavior?
-  - Existing universal rule already flags it?
-      - Right behavior       -> enable/keep it (check the opinionated group; see config ref).
-      - Wrong threshold/list -> set it in ruleOptions (no copy, no new rule).
-  - No rule covers it (new concern) -> author a new rule (below).
-```
-
-## Authoring a rule
-
-A rule is one file: `dlint-rules/universal/<id>.ts` (bundled) or `<rulesDir>/<id>.ts`
-(project). The **id is the filename**. Skeleton:
-
-```typescript
-import ts from "typescript";
-import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
-
-// ===========================================================================
-// CONFIG - defaults; a project overrides these via ruleOptions["<id>"]
-// ===========================================================================
-const MIN_CALLERS = 2;
-// ===========================================================================
-
-export default defineRule({
-  meta: {
-    category: "performance", // "security" | "performance" | "quality" | "architecture"
-    description: "What the rule enforces, one line", // required, keep it under 120 chars
-    // severity?: "error" | "warning"   // optional in-rule default
-    // subChecks?: number               // if the rule bundles several checks
-  },
-  check(ctx) {
-    // Tunable values: read ctx.options with the CONFIG const as the default (principle 3).
-    const minCallers = (ctx.options.minCallers as number) ?? MIN_CALLERS;
-
-    ctx.walk((node) => {
-      if (!ts.isCallExpression(node)) return;
-      // Origin via symbol resolution, NOT a name string (principle 2): aliases and React.x count.
-      const callee = resolveCallee(node, ctx.checker);
-      if (callee?.packageName !== "react" || callee.name !== "cache") return;
-      // ... structural + type checks ...
-      ctx.reportAt(node, `Human-readable problem and fix`, {
-        action: "short-action-id",
-        pattern: "How to fix it",
-        // reference?: "https://...",
-        // fix?: <TextChange | TextChange[]>  // optional autofix
-      });
-    });
-  },
-});
-```
-
-Key context (full catalogue in `references/sdk-api.md`):
-
-- `ctx.program`, `ctx.checker`, `ctx.sourceFile`, `ctx.referenceIndex` - the shared compiler state.
-- `ctx.walk(node => ...)` - visit every node in the current file.
-- `ctx.reportAt(node, message, advisory?)` - flag a problem at a node.
-- `ctx.createFix / insertBefore / insertAfter / deleteNode` - build `fix` TextChanges (autofix).
-- `ctx.isSubCheckDisabled(subCheckId)` - gate a sub-check inside a multi-check rule.
-- `ctx.options` - per-rule project overrides; read as `ctx.options.x ?? DEFAULT`.
-- `ctx.projectRoot` - absolute project root (`--path`, else the config dir, else the cwd).
-
-Authoring rules:
-
-- Put tunable values in a single `CONFIG` banner block at the top, and read them via
-  `ctx.options` so a project tunes them without copying the rule.
-- Resolve cross-file/symbol questions with the helpers; never with name or path strings.
-- Keep each rule self-contained - duplication between rule files is intentional (rules are
-  isolated and shareable); shared logic lives only in the SDK helpers, not copied between rules.
-
-## Testing a rule (always)
-
-Every added or changed rule needs a fixture. Convention:
-
-- `tests/fixtures/<id>.fixture.ts` (or `.tsx`) - self-contained code.
-- Put an other-extension twin fixture into `tests/fixtures/variants/` - same-folder twins collide.
-- Write one `// EXPECT: <id>` per expected finding on its line (or `// EXPECT: <id>@<line>`).
-- Every other line must not be flagged - this is the false-positive guard.
-- Run one rule: `bash tests/run.sh <id>` - or the whole suite: `bash tests/run.sh`.
-
-Cover both a true positive (the bug fires) and a near-miss false positive (a similar-but-fine
-line stays silent). Details + island tests (route-boundary, config-resolve, options) in
-`references/testing.md`.
-
-## Configuring / shipping (rule packs & plugins)
-
-A project consumes dlint via `dlint.config.ts`: bundled universal rules load automatically,
-and a `rulesDir` adds project-specific rules (a "rule pack"/plugin) - a project rule with the
-same id overrides a bundled one. Tune behavior with:
-
-- `groups` - toggle a whole set with one severity (the built-in `opinionated` group ships off).
-- `ruleOptions` - per-rule tunable values, keyed by rule id (the no-copy override path).
-- `overrides` - per-rule severity, optionally file-scoped.
-
-Severity precedence (most specific wins): per-rule `override` -> in-rule `meta.severity` ->
-`group` -> global default. Full schema, the opinionated-group list, and how to build a
-shareable rule pack are in `references/config-and-shipping.md`.
-
-## Verify (run in order; fix task-related errors first)
-
-1. `pnpm build` - `tsc` compiles the engine clean (strict baseline).
-2. `pnpm typecheck` - type-checks the **rules** too (the main build only covers `src/`; this
-   config also includes `dlint-rules/`). Expect 0 errors.
-3. `node build/cli.js --format compact` (or `pnpm lint:dlint`) - dlint self-lints clean (0/0).
-4. `bash tests/run.sh` - all fixtures pass (true + false positives).
-
-Note: jiti strips types at runtime, so a type error in a rule will NOT crash a test - it can
-hide as a silent wrong-value bug. That is exactly why step 2 (`pnpm typecheck`) is mandatory
-after any rule change, not just `pnpm build`.
+- Never skip step 2 - jiti strips types, so a type error hides as a silent wrong value.
