@@ -50,7 +50,7 @@ function isSafeType(type: ts.Type): boolean {
   return false;
 }
 
-/** Check if an object type's properties are all safe (branded, primitive, library) */
+// Check if an object type's properties are all safe (branded, primitive, library)
 function isObjectWithSafeProperties(
   type: ts.Type,
   checker: ts.TypeChecker,
@@ -64,7 +64,7 @@ function isObjectWithSafeProperties(
   });
 }
 
-/** Recursively check if a type is safe — primitives, branded, library, or objects of safe fields */
+// Recursively check if a type is safe — primitives, branded, library, or objects of safe fields
 function isLeafSafe(type: ts.Type, checker: ts.TypeChecker): boolean {
   const resolved = checker.getNonNullableType(type);
   if (resolved.flags & PRIMITIVE_FLAGS) return true;
@@ -80,7 +80,7 @@ function isLeafSafe(type: ts.Type, checker: ts.TypeChecker): boolean {
   return false;
 }
 
-/** Does this function have at least one param that is a user-constructible object? */
+// Does this function have at least one param that is a user-constructible object?
 function hasUserConstructibleParam(
   params: readonly ts.ParameterDeclaration[],
   checker: ts.TypeChecker,

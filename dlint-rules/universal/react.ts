@@ -17,7 +17,7 @@ function isReactHook(call: ts.CallExpression, checker: ts.TypeChecker, name: str
   return callee?.packageName === "react" && callee.name === name;
 }
 
-/** TypeChecker: call is a React state setter from useState/useReducer destructuring at index 1 */
+// TypeChecker: call is a React state setter from useState/useReducer destructuring at index 1
 function isReactStateSetterCall(call: ts.CallExpression, checker: ts.TypeChecker, stateHooks: Set<string>): boolean {
   const sym = checker.getSymbolAtLocation(call.expression);
   if (!sym?.valueDeclaration) return false;
@@ -37,7 +37,7 @@ function isReactStateSetterCall(call: ts.CallExpression, checker: ts.TypeChecker
   return callee?.packageName === "react" && stateHooks.has(callee.name);
 }
 
-/** Check if any identifier in the node resolves to one of the given symbols */
+// Check if any identifier in the node resolves to one of the given symbols
 function refsAnySymbol(node: ts.Node, symbols: Set<ts.Symbol>, checker: ts.TypeChecker): boolean {
   let found = false;
   function scan(n: ts.Node): void {
@@ -52,7 +52,7 @@ function refsAnySymbol(node: ts.Node, symbols: Set<ts.Symbol>, checker: ts.TypeC
   return found;
 }
 
-/** Check if setState arg is a safe constant (empty array, new expression, boolean/null literal) */
+// Check if setState arg is a safe constant (empty array, new expression, boolean/null literal)
 function isSafeSetStateArg(arg: ts.Expression): boolean {
   if (ts.isArrayLiteralExpression(arg) && arg.elements.length === 0) return true;
   if (ts.isNewExpression(arg)) return true;
@@ -61,7 +61,7 @@ function isSafeSetStateArg(arg: ts.Expression): boolean {
     || arg.kind === ts.SyntaxKind.NullKeyword;
 }
 
-/** Check if node is inside a nested closure (arrow/function) relative to the callback boundary */
+// Check if node is inside a nested closure (arrow/function) relative to the callback boundary
 function isInsideNestedClosure(node: ts.Node, boundary: ts.Node): boolean {
   let parent: ts.Node | undefined = node.parent;
   while (parent && parent !== boundary) {
@@ -71,7 +71,7 @@ function isInsideNestedClosure(node: ts.Node, boundary: ts.Node): boolean {
   return false;
 }
 
-/** Check if setState call is guarded (safe constant arg or arg references dependency symbols) */
+// Check if setState call is guarded (safe constant arg or arg references dependency symbols)
 function isGuardedSetState(call: ts.CallExpression, depSymbols: Set<ts.Symbol>, checker: ts.TypeChecker): boolean {
   const firstArg = call.arguments[0];
   if (!firstArg) return false;

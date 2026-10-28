@@ -32,7 +32,7 @@ function isTypeRefNamed(typeNode: ts.TypeReferenceNode, name: string, checker: t
   return sym !== undefined && sym.name === name && isLibDeclaration(sym);
 }
 
-/** Find a property that is literal-typed on ALL union members (discriminant) */
+// Find a property that is literal-typed on ALL union members (discriminant)
 function findDiscriminantProperty(
   unionType: ts.UnionType,
   checker: ts.TypeChecker

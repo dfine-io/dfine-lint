@@ -4,7 +4,7 @@
 import ts from "typescript";
 import { defineRule, isInBooleanContext, isStringType } from "@dfine-io-gmbh/dlint";
 
-/** NullKeyword or undefined type (TypeChecker-verified, not name-based) */
+// NullKeyword or undefined type (TypeChecker-verified, not name-based)
 function isNullishLiteral(n: ts.Node, checker: ts.TypeChecker): boolean {
   if (n.kind === ts.SyntaxKind.NullKeyword) return true;
   return (checker.getTypeAtLocation(n).flags & ts.TypeFlags.Undefined) !== 0;

@@ -30,7 +30,7 @@ export async function loadConfig(projectPath: string, configFile?: string): Prom
   return (mod as { default: DlintConfig }).default ?? (mod as DlintConfig);
 }
 
-/** Recursively collect all .ts files from a directory */
+// Recursively collect all .ts files from a directory
 function collectRuleFiles(dir: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir)) {

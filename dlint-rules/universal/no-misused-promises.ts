@@ -4,7 +4,7 @@
 import ts from "typescript";
 import { defineRule, resolveCallee } from "@dfine-io-gmbh/dlint";
 
-/** Structural: contextual type at argument position expects void return */
+// Structural: contextual type at argument position expects void return
 function expectsVoidReturn(arg: ts.Expression, checker: ts.TypeChecker): boolean {
   const contextual = checker.getContextualType(arg);
   if (!contextual) return false;

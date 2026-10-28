@@ -119,7 +119,7 @@ if (
   process.exit(0);
 }
 
-/** Collect all non-flag args after a --flag until the next --flag */
+// Collect all non-flag args after a --flag until the next --flag
 function collectValues(argv: readonly string[], flag: string): string[] {
   const values: string[] = [];
   let collecting = false;

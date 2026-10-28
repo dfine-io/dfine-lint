@@ -69,12 +69,12 @@ function findCalls(
 
 function getCleanupCalls(callback: ts.ArrowFunction | ts.FunctionExpression, cleanupNames: ReadonlySet<string>, checker: ts.TypeChecker): ApiCall[] {
   const found: ApiCall[] = [];
-  /* Scan all return statements including those inside conditional branches */
+  // Scan all return statements including those inside conditional branches
   function scanForReturns(node: ts.Node): void {
     if (ts.isReturnStatement(node) && node.expression) {
       found.push(...findCalls(node.expression, cleanupNames, checker, true));
     }
-    /* Don't descend into nested functions */
+    // Don't descend into nested functions
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) return;
     ts.forEachChild(node, scanForReturns);
   }

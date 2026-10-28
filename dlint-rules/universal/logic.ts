@@ -40,7 +40,7 @@ export default defineRule({
     ctx.walk((node) => {
       // 1. identical conditions in if/else-if chain
       if (!ts.isIfStatement(node)) {
-        /* skip */
+        // skip
       } else if (
         node.elseStatement &&
         ts.isIfStatement(node.elseStatement) &&

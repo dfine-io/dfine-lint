@@ -31,7 +31,7 @@ function isStableHookValue(
   stableSetterHooks: Set<string>,
   stableValueHooks: Set<string>,
 ): boolean {
-  /* Array destructuring: const [state, setter] = useState(...) */
+  // Array destructuring: const [state, setter] = useState(...)
   if (ts.isBindingElement(decl) && ts.isArrayBindingPattern(decl.parent)) {
     const index = decl.parent.elements.indexOf(decl);
     const varDecl = decl.parent.parent;
@@ -47,7 +47,7 @@ function isStableHookValue(
     }
   }
 
-  /* Direct assignment: const ref = useRef(...) */
+  // Direct assignment: const ref = useRef(...)
   if (
     ts.isVariableDeclaration(decl) &&
     decl.initializer &&
@@ -59,7 +59,7 @@ function isStableHookValue(
     }
   }
 
-  /* Const with literal value: const MAX = 5, const label = "hello", const flag = true */
+  // Const with literal value: const MAX = 5, const label = "hello", const flag = true
   if (ts.isVariableDeclaration(decl) && decl.initializer) {
     const parent = decl.parent;
     if (ts.isVariableDeclarationList(parent) && parent.flags & ts.NodeFlags.Const) {
@@ -171,19 +171,19 @@ function collectCallbackDeps(
         return;
       }
 
-      /* Must be declared in component scope */
+      // Must be declared in component scope
       if (!isDeclaredBetween(valueDecl, componentFn, callback)) {
         ts.forEachChild(n, visit);
         return;
       }
 
-      /* Skip identity-stable hook values */
+      // Skip identity-stable hook values
       if (isStableHookValue(valueDecl, checker, stableSetterHooks, stableValueHooks)) {
         ts.forEachChild(n, visit);
         return;
       }
 
-      /* Skip self-reference (const fn = useCallback(() => fn(), [])) */
+      // Skip self-reference (const fn = useCallback(() => fn(), []))
       if (isSelfReference(valueDecl, callback)) {
         ts.forEachChild(n, visit);
         return;

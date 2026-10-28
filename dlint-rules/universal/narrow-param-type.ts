@@ -27,14 +27,14 @@ function isPartialTypeNode(typeNode: ts.TypeNode | undefined, checker: ts.TypeCh
   return (typeNode.typeArguments?.length ?? 0) === 1;
 }
 
-/** Type declaration is external (lib.d.ts, node_modules) — developer cannot narrow */
+// Type declaration is external (lib.d.ts, node_modules) — developer cannot narrow
 function isExternalType(paramType: ts.Type): boolean {
   const symbol = paramType.getSymbol() ?? paramType.aliasSymbol;
   if (!symbol) return false;
   return isLibDeclaration(symbol) || isNodeModulesDeclaration(symbol);
 }
 
-/** Function is a callback — param type imposed by caller, not developer's choice */
+// Function is a callback — param type imposed by caller, not developer's choice
 function isCallbackArgument(fn: ts.Node): boolean {
   if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
   // Direct call argument: foo((s) => ...), arr.map((c) => ...)
